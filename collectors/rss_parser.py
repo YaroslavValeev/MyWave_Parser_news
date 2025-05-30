@@ -2,15 +2,14 @@ import feedparser
 from bs4 import BeautifulSoup
 import logging
 from datetime import datetime, timedelta
+import json
+import hashlib
 
 logger = logging.getLogger(__name__)
 
 def parse_rss(source, filter_keywords):
     """
-    Парсит RSS/Atom-ленту.
-    :param source: Объект NewsSource с полями url, name, last_id, filter.
-    :param filter_keywords: Список ключевых слов для фильтрации (lowercase).
-    :return: Список словарей (news item dicts).
+    Парсит RSS/Atom-ленту и возвращает данные по структуре raw_feed.
     """
     news_items = []
     try:
@@ -19,7 +18,7 @@ def parse_rss(source, filter_keywords):
             logger.warning(f"RSS: {source.name} - пустая или недоступная лента.")
             return []
 
-        last_id = source.last_id
+        last_id = getattr(source, 'last_id', None)
         new_top_id = None
 
         for entry in feed.entries:
@@ -31,12 +30,7 @@ def parse_rss(source, filter_keywords):
             link = entry.get('link', '').strip()
             content_html = entry.get('content', [{'value': entry.get('summary', '')}])[0]['value']
             content_text = BeautifulSoup(content_html, 'html.parser').get_text(separator=' ', strip=True)
-
-            if filter_keywords and source.filter:
-                text_for_filter = (title + ' ' + content_text).lower()
-                if not any(kw in text_for_filter for kw in filter_keywords):
-                    continue
-
+            raw_tags = ','.join(entry.get('tags', [])) if 'tags' in entry else ''
             images, videos = [], []
             for media in entry.get('media_content', []):
                 url, mtype = media.get('url', ''), media.get('type', '')
@@ -44,51 +38,60 @@ def parse_rss(source, filter_keywords):
                     images.append(url)
                 elif mtype.startswith('video'):
                     videos.append(url)
-
             date_str = entry.get('published', entry.get('updated', ''))
-
+            # Формируем checksum по raw_title+source_url
+            checksum = hashlib.md5((title + source.url).encode('utf-8')).hexdigest()
             news_items.append({
-                "source": f"RSS: {source.name}",
-                "title": title or "(без заголовка)",
-                "content": content_text,
-                "link": link,
-                "date": date_str,
-                "images": images,
-                "videos": videos,
-                "transcript": "",
-                "comment": ""
+                "id": entry_id or hashlib.md5((title+link).encode('utf-8')).hexdigest(),
+                "source_type": "rss",
+                "source_name": source.name,
+                "source_url": source.url,
+                "created_at": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+                "ingest_status": "raw",
+                "raw_title": title or "(без заголовка)",
+                "raw_content": content_text,
+                "raw_html": content_html,
+                "raw_media": json.dumps(images + videos),
+                "raw_tags": raw_tags,
+                "checksum": checksum,
+                "parse_error": "",
+                "debug_info": f"rss_link={link}"
             })
-
             if new_top_id is None:
                 new_top_id = entry_id
-
         if new_top_id:
             source.last_id = new_top_id
-
     except Exception as e:
         logger.error(f"Ошибка парсинга RSS {source.url}: {e}", exc_info=True)
-
-    # ====== ФИЛЬТРАЦИЯ ЗА ПОСЛЕДНИЕ 2 МЕСЯЦА =======
+        news_items.append({
+            "id": "",
+            "source_type": "rss",
+            "source_name": getattr(source, 'name', ''),
+            "source_url": getattr(source, 'url', ''),
+            "created_at": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+            "ingest_status": "error",
+            "raw_title": "",
+            "raw_content": "",
+            "raw_html": "",
+            "raw_media": "[]",
+            "raw_tags": "",
+            "checksum": "",
+            "parse_error": str(e),
+            "debug_info": ""
+        })
+    # Фильтрация за последние 2 месяца
     two_months_ago = datetime.now() - timedelta(days=60)
     filtered = []
     for item in news_items:
-        date_str = item.get("date", "")
+        date_str = item.get("created_at", "")
         if not date_str:
-            # Если нет даты — добавим
             filtered.append(item)
             continue
-        # Попытаемся распарсить
         try:
-            # Допустим, часто RSS: 'Mon, 06 Mar 2025 12:34:56 +0000'
-            # Обрежем лишнее, либо используем datetime.strptime с подходящим форматом
-            # Или можно использовать dateparser — на ваше усмотрение
-            dt = date_str[:25]  # грубое обрезание
-            parsed_date = datetime.strptime(dt, "%a, %d %b %Y %H:%M:%S")
-            if parsed_date >= two_months_ago:
+            dt = datetime.strptime(date_str[:19], "%Y-%m-%d %H:%M:%S")
+            if dt >= two_months_ago:
                 filtered.append(item)
         except Exception:
-            # Если формат необычный, не получилось — добавим
             filtered.append(item)
-
     logger.info(f"RSS: {source.name} -> после фильтрации за 2 месяца: {len(filtered)} из {len(news_items)}")
     return list(reversed(filtered))

@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import random
+import json
+from datetime import datetime
 from abc import ABC, abstractmethod
 from typing import Generator
 from utils.helpers import download_media # Импортируем из utils/helpers
@@ -50,7 +52,7 @@ class TelethonParser(BaseParser):
 
     async def parse(self, client: TelegramClient, source) -> Generator[dict, None, None]: # type: ignore
         """
-        Парсит сообщения из Telegram-канала.
+        Парсит сообщения из Telegram-канала и возвращает данные по структуре raw_feed.
 
         Args:
             client (TelegramClient): Клиент Telegram.
@@ -77,26 +79,69 @@ class TelethonParser(BaseParser):
                 try:
                     text = message.text or ""
                     media_downloaded = False
-                    if message.media:                        
+                    media_links = []
+                    if message.media:
                         media_downloaded = await download_media(message)
-                        if not media_downloaded:
-                                logger.warning(f"Не удалось загрузить медиа для сообщения {message.id}")
+                        # Здесь можно добавить путь к скачанному файлу в media_links
+                        # media_links.append(путь_к_файлу)
 
-                    # Формируем данные сообщения
-                    message_data = {
-                        "id": message.id,
-                        "text": text,
-                        "media_downloaded": media_downloaded,
-                        "date": message.date.isoformat() if message.date else None
+                    title = getattr(message, 'post_author', '') or getattr(entity, 'title', '')
+                    checksum = ''  # Можно реализовать md5(title+source.url)
+
+                    yield {
+                        "id": str(message.id),
+                        "source_type": "telegram",
+                        "source_name": getattr(entity, 'title', ''),
+                        "source_url": source.url,
+                        "created_at": message.date.strftime('%Y-%m-%d %H:%M:%S') if message.date else datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+                        "ingest_status": "raw",
+                        "raw_title": title,
+                        "raw_content": text,
+                        "raw_html": "",  # Можно добавить html-версию, если есть
+                        "raw_media": json.dumps(media_links),
+                        "raw_tags": "",  # Можно добавить теги, если есть
+                        "checksum": checksum,
+                        "parse_error": "",
+                        "debug_info": f"msg_id={message.id}"
                     }
-                    yield message_data
 
                 except Exception as e:
                     logger.error(f"Ошибка обработки сообщения {message.id}: {e}")
+                    yield {
+                        "id": str(message.id),
+                        "source_type": "telegram",
+                        "source_name": getattr(entity, 'title', ''),
+                        "source_url": source.url,
+                        "created_at": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+                        "ingest_status": "error",
+                        "raw_title": "",
+                        "raw_content": "",
+                        "raw_html": "",
+                        "raw_media": "[]",
+                        "raw_tags": "",
+                        "checksum": "",
+                        "parse_error": str(e),
+                        "debug_info": f"msg_id={getattr(message, 'id', '')}"
+                    }
 
         except Exception as e:
             logger.error(f"Ошибка парсинга {source.url}: {e}")
-            return  # Завершаем генератор при ошибке
+            yield {
+                "id": "",
+                "source_type": "telegram",
+                "source_name": getattr(source, 'name', ''),
+                "source_url": getattr(source, 'url', ''),
+                "created_at": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+                "ingest_status": "error",
+                "raw_title": "",
+                "raw_content": "",
+                "raw_html": "",
+                "raw_media": "[]",
+                "raw_tags": "",
+                "checksum": "",
+                "parse_error": str(e),
+                "debug_info": ""
+            }
 
     async def human_delay(self):
         """

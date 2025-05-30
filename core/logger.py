@@ -1,23 +1,22 @@
 import logging
 import os
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 
-# Определяем уровень логирования (по умолчанию INFO)
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
-# Настройка логирования: запись в файл с ротацией и вывод в консоль
-log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+# Создаём папку logs, если её нет
+os.makedirs("logs", exist_ok=True)
 
-file_handler = RotatingFileHandler("bot.log", maxBytes=5 * 1024 * 1024, backupCount=3)
-file_handler.setFormatter(log_formatter)
-
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(log_formatter)
-
-# Создаём объект логгера
-logger = logging.getLogger("MyWaveBot")
+logger = logging.getLogger("mywave")
 logger.setLevel(LOG_LEVEL)
-logger.addHandler(file_handler)
+handler = TimedRotatingFileHandler("logs/mywave.log", when="midnight", interval=1, backupCount=7)
+formatter = logging.Formatter('[%(asctime)s] %(levelname)s:%(name)s:%(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+# Также выводим в консоль
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
-logger.info("Логгер настроен и работает.")
+logger.info("Логгер mywave с ротацией и консолью инициализирован.")

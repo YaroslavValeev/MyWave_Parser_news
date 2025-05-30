@@ -37,6 +37,8 @@ from config.settings import config
 from collectors.telegram_parser import download_media
 from telegram_rate_limiter import safe_send_message, RateLimiter
 from utils.telegram_session import TelegramSessionManager
+from models import NewsItem
+import hashlib
 
 # Load environment variables from .env file
 load_dotenv()
@@ -133,28 +135,52 @@ async def check_session(client: TelegramClient) -> bool:
         raise
 
 async def init_google_sheets():
-    """Инициализация Google Sheets с обработкой ошибок"""
+    """Инициализация Google Sheets с обработкой ошибок и поддержкой всех листов в нижнем регистре с подчёркиванием"""
     try:
         creds = Credentials.from_service_account_file(
-            config.GOOGLE_CREDENTIALS_FILE,  # Исправлено на GOOGLE_CREDENTIALS_FILE
+            config.GOOGLE_CREDENTIALS_FILE,
             scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
         client = gspread.authorize(creds)
         doc = client.open_by_key(config.GOOGLE_SHEET_ID)
-        
         worksheets = {
-            'news': doc.worksheet("news_articles"),
-            'contacts': doc.worksheet("contacts")
+            'raw_feed': doc.worksheet("raw_feed"),
+            'news_articles': doc.worksheet("news_articles"),
+            'contacts': doc.worksheet("contacts"),
+            'news_sources': doc.worksheet("news_sources"),
+            'logs_reports': doc.worksheet("logs_reports"),
+            'admin_actions_review': doc.worksheet("admin_actions_review"),
+            'analytics_statistics': doc.worksheet("analytics_statistics"),
+            'configuration_settings': doc.worksheet("configuration_settings")
         }
-        
-        headers = ["ID", "Date", "Source Type", "Source URL", "Title",
-                   "Content", "Images", "Videos", "Status"]
-        
-        # Check if the news worksheet is empty; if so, add header row.
-        if not worksheets['news'].get_all_values():
-            worksheets['news'].append_row(headers)
-            
-        logger.info("Google Sheets initialized")
+        # Заголовки для raw_feed
+        raw_feed_headers = [
+            "id", "source_type", "source_name", "source_url", "created_at", "ingest_status",
+            "raw_title", "raw_content", "raw_html", "raw_media", "raw_tags",
+            "checksum", "parse_error", "debug_info"
+        ]
+        if not worksheets['raw_feed'].get_all_values():
+            worksheets['raw_feed'].append_row(raw_feed_headers)
+        # Заголовки для news_articles (пример)
+        news_articles_headers = [
+            "article_id", "date", "title", "content", "summary", "questions", "expert_opinion",
+            "topic", "language", "keywords", "media", "status", "posted_at", "channel_ids",
+            "engagement_id", "updated_at", "editor"
+        ]
+        if not worksheets['news_articles'].get_all_values():
+            worksheets['news_articles'].append_row(news_articles_headers)
+        # Заголовки для остальных листов (примерные, скорректируйте по вашей структуре)
+        if not worksheets['news_sources'].get_all_values():
+            worksheets['news_sources'].append_row(["id", "type", "name", "url", "active", "last_id", "filter"])
+        if not worksheets['logs_reports'].get_all_values():
+            worksheets['logs_reports'].append_row(["id", "created_at", "level", "message", "context"])
+        if not worksheets['admin_actions_review'].get_all_values():
+            worksheets['admin_actions_review'].append_row(["id", "action", "user", "timestamp", "details"])
+        if not worksheets['analytics_statistics'].get_all_values():
+            worksheets['analytics_statistics'].append_row(["id", "date", "metric", "value", "details"])
+        if not worksheets['configuration_settings'].get_all_values():
+            worksheets['configuration_settings'].append_row(["key", "value", "description", "updated_at"])
+        logger.info("Google Sheets initialized (все листы и заголовки приведены к нижнему регистру с подчёркиванием)")
         return worksheets
     except Exception as e:
         logger.error(f"Ошибка Google Sheets: {e}")
@@ -485,45 +511,80 @@ class YoutubeParser(BaseParser):
             return []
 
 async def save_to_google_sheets(worksheets, data):
-    """Сохранение данных в Google Sheets с новой структурой"""
+    """Сохранение данных в Google Sheets: только в raw_feed по новой структуре, с валидацией NewsItem и уникальными контактами"""
     try:
-        # Подготовка данных для таблицы news_articles
-        news_rows = []
-        existing_ids = worksheets['news'].col_values(1)
+        # Подготовка данных для таблицы raw_feed
+        raw_rows = []
+        existing_ids = worksheets['raw_feed'].col_values(1)
         for item in data:
-            if item.get('id') not in existing_ids:
-                news_rows.append([
-                    item.get('id', ''),
-                    item.get('date', ''),
-                    item.get('source_type', ''),
-                    item.get('source_url', ''),
-                    item.get('title', ''),
-                    item.get('text', ''),
-                    item.get('images', ''),
-                    item.get('videos', ''),
-                    item.get('status', '')
-                ])
-        
-        if news_rows:
-            worksheets['news'].append_rows(news_rows)
-            logger.info(f"Added {len(news_rows)} records to Google Sheets (news_articles)")
-            
-        # Обновление contacts (если есть информация об авторах)
-        contacts_data = {}
+            # Валидация и преобразование через NewsItem
+            try:
+                created_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+                # Генерация checksum (md5 от raw_title+source_url)
+                checksum = hashlib.md5((item.get('raw_title', '') + item.get('source_url', '')).encode('utf-8')).hexdigest()
+                news = NewsItem(
+                    id=item.get('id', ''),
+                    source_type=item.get('source_type', ''),
+                    source_name=item.get('source_name', ''),
+                    source_url=item.get('source_url', ''),
+                    created_at=created_at,
+                    ingest_status='raw',
+                    raw_title=item.get('raw_title', item.get('title', '')),
+                    raw_content=item.get('raw_content', item.get('text', '')),
+                    raw_html=item.get('raw_html', ''),
+                    raw_media=item.get('raw_media', ''),
+                    lang=item.get('lang', ''),
+                    raw_tags=item.get('raw_tags', ''),
+                    checksum=checksum,
+                    parse_error=item.get('parse_error', ''),
+                    debug_info=item.get('debug_info', '')
+                )
+                row = [
+                    news.id,
+                    news.source_type,
+                    news.source_name,
+                    news.source_url,
+                    news.created_at,
+                    news.ingest_status,
+                    news.raw_title,
+                    news.raw_content,
+                    news.raw_html,
+                    news.raw_media,
+                    news.raw_tags,
+                    news.checksum,
+                    news.parse_error,
+                    news.debug_info
+                ]
+                raw_rows.append(row)
+            except Exception as e:
+                logger.error(f"Ошибка валидации NewsItem: {e}")
+        # Фильтрация по id (уникальность)
+        new_rows = [row for row in raw_rows if row[0] not in existing_ids]
+        if new_rows:
+            worksheets['raw_feed'].append_rows(new_rows)
+            logger.info(f"Добавлено {len(new_rows)} записей в Google Sheets (raw_feed)")
+        # --- Автоматическая запись новых контактов ---
+        # Ожидается, что item['contacts'] - список контактов с contact_id
+        contacts_rows = []
+        existing_contact_ids = set(worksheets['contacts'].col_values(1))
         for item in data:
-            if 'author_id' in item and item['author_id']:
-                key = (item['author_id'], item.get('author_name', ''))
-                contacts_data.setdefault(key, 0)
-                contacts_data[key] += 1
-                
-        if contacts_data:
-            contacts_rows = [[uid, name] for (uid, name) in contacts_data.keys()]
-            if contacts_rows:
-                worksheets['contacts'].append_rows(contacts_rows)
-                logger.info(f"Added {len(contacts_rows)} records to Google Sheets (contacts)")
-
+            contacts = item.get('contacts', [])
+            for contact in contacts:
+                contact_id = contact.get('contact_id')
+                if contact_id and contact_id not in existing_contact_ids:
+                    contacts_rows.append([
+                        contact_id,
+                        contact.get('type', ''),
+                        contact.get('value', ''),
+                        contact.get('source', ''),
+                        contact.get('date_found', ''),
+                    ])
+                    existing_contact_ids.add(contact_id)
+        if contacts_rows:
+            worksheets['contacts'].append_rows(contacts_rows)
+            logger.info(f"Добавлено {len(contacts_rows)} новых контактов в Google Sheets (contacts)")
     except Exception as e:
-        logger.error(f"Error saving to Google Sheets: {e}")
+        logger.error(f"Ошибка при сохранении в Google Sheets: {e}")
 
 def handle_signals():
     """Обработчик сигналов"""

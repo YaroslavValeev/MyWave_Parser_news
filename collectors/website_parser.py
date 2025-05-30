@@ -1,12 +1,11 @@
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+import aiohttp
+from selectolax.parser import HTMLParser
 import logging
 import random
 import dateparser
 from datetime import datetime, timedelta
+import hashlib
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -18,126 +17,110 @@ USER_AGENTS = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0)",
 ]
 
-PROXIES = [
-    # Пример: 'http://user:password@ip:port'
-    # Список можно хранить в .env
-]
-
-def get_session():
-    session = requests.Session()
-    retry = Retry(
-        total=3,
-        backoff_factor=0.5,
-        status_forcelist=[500, 502, 503, 504]
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    return session
-
-def parse_website(source, filter_keywords):
-    """
-    Парсит веб-страницу.
-    :param source: Объект NewsSource (url, name, last_id, filter).
-    :param filter_keywords: Список ключевых слов (lowercase).
-    :return: Список словарей (news item dicts).
-    """
-    logger.info(f"🌐 Начинаем парсинг сайта {source.name} ({source.url})")
-    news_items = []
-
+async def fetch_site(session, url):
     headers = {"User-Agent": random.choice(USER_AGENTS)}
-    proxy = random.choice(PROXIES) if PROXIES else None
-    proxies = {"http": proxy, "https": proxy} if proxy else None
+    async with session.get(url, headers=headers) as resp:
+        html = await resp.text()
+        tree = HTMLParser(html)
+        return tree
 
-    try:
-        session = get_session()
-        response = session.get(source.url, timeout=15, headers=headers, proxies=proxies)
-        response.raise_for_status()
-    except Exception as e:
-        logger.error(f"Ошибка загрузки {source.url}: {e}")
-        return []
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-    last_id = source.last_id
-    new_top_id = None
-
-    items = soup.find_all('article')
-    if not items:
-        items = soup.find_all(lambda tag: tag.name in ['div', 'li']
-                              and tag.get('class')
-                              and any(sub in ' '.join(tag.get('class')) for sub in ['news', 'post']))
-    for item in items:
-        title_tag = item.find(['h1', 'h2', 'h3'])
-        title = title_tag.get_text(strip=True) if title_tag else "(без заголовка)"
-        link = urljoin(source.url, title_tag.find('a')['href']) if title_tag and title_tag.find('a') else source.url
-
-        if last_id and link == last_id:
-            break
-
-        content_text = ' '.join(p.get_text(strip=True) for p in item.find_all('p'))
-        if filter_keywords and source.filter:
-            text_for_filter = (title + ' ' + content_text).lower()
-            if not any(kw in text_for_filter for kw in filter_keywords):
-                continue
-
-        # Логика извлечения ключевых слов
-        keywords_list = []
-        if filter_keywords:
-            combined_text = (title + ' ' + content_text).lower()
-            keywords_list = [kw for kw in filter_keywords if kw in combined_text]
-
-        images = [urljoin(source.url, img['src']) for img in item.find_all('img', src=True)]
-        date_str = ""
-        time_tag = item.find(['time', 'span.date', 'div.date'])
-        if time_tag:
-            raw_date = time_tag.get('datetime', '') or time_tag.get_text(strip=True)
-            settings = {
-                'TIMEZONE': 'UTC',
-                'RETURN_AS_TIMEZONE_AWARE': True,
-                'DATE_ORDER': 'DMY'
-            }
-            parsed_date = dateparser.parse(raw_date, settings=settings)
-            if parsed_date:
-                date_str = parsed_date.strftime("%Y-%m-%d %H:%M:%S")
-        # Фолбэк: пытаемся найти дату в тексте новости, если не найдено
-        if not date_str:
-            search_result = dateparser.search.search_dates(content_text)
-            if search_result:
-                date_str = search_result[0][1].strftime("%Y-%m-%d %H:%M:%S")
-
-        news_items.append({
-            "source": f"Website: {source.name}",
-            "title": title,
-            "content": content_text,
-            "link": link,
-            "date": date_str,
-            "images": images,
-            "videos": [],
-            "transcript": "",
-            "comment": "",
-            "keywords": keywords_list
-        })
-
-        if new_top_id is None and link:
-            new_top_id = link
-
-    if new_top_id:
-        source.last_id = new_top_id
-
-    # ====== ФИЛЬТРАЦИЯ ЗА ПОСЛЕДНИЕ 2 МЕСЯЦА =======
+async def parse_website_async(source, filter_keywords):
+    """
+    Асинхронный парсинг сайта с помощью aiohttp + selectolax.
+    source.url — адрес сайта
+    filter_keywords — ключевые слова для фильтрации
+    """
+    logger.info(f"🌐 Начинаем асинхронный парсинг сайта {source.name} ({source.url})")
+    news_items = []
+    async with aiohttp.ClientSession() as session:
+        try:
+            tree = await fetch_site(session, source.url)
+            last_id = getattr(source, 'last_id', None)
+            new_top_id = None
+            for article in tree.css('article'):
+                title = article.css_first('h1,h2,h3')
+                title = title.text(strip=True) if title else '(без заголовка)'
+                link = article.css_first('a')
+                link = link.attributes.get('href') if link else source.url
+                if last_id and link == last_id:
+                    break
+                content = article.text(strip=True)
+                if filter_keywords and getattr(source, 'filter', None):
+                    text_for_filter = (title + ' ' + content).lower()
+                    if not any(kw in text_for_filter for kw in filter_keywords):
+                        continue
+                keywords_list = []
+                if filter_keywords:
+                    combined_text = (title + ' ' + content).lower()
+                    keywords_list = [kw for kw in filter_keywords if kw in combined_text]
+                images = [img.attributes.get('src') for img in article.css('img') if img.attributes.get('src')]
+                date_str = ""
+                time_tag = article.css_first('time,span.date,div.date')
+                if time_tag:
+                    raw_date = time_tag.attributes.get('datetime', '') or time_tag.text(strip=True)
+                    settings = {
+                        'TIMEZONE': 'UTC',
+                        'RETURN_AS_TIMEZONE_AWARE': True,
+                        'DATE_ORDER': 'DMY'
+                    }
+                    parsed_date = dateparser.parse(raw_date, settings=settings)
+                    if parsed_date:
+                        date_str = parsed_date.strftime("%Y-%m-%d %H:%M:%S")
+                if not date_str:
+                    search_result = dateparser.search.search_dates(content)
+                    if search_result:
+                        date_str = search_result[0][1].strftime("%Y-%m-%d %H:%M:%S")
+                checksum = hashlib.md5((title + source.url).encode('utf-8')).hexdigest()
+                news_items.append({
+                    "id": hashlib.md5((title+link).encode('utf-8')).hexdigest(),
+                    "source_type": "site",
+                    "source_name": source.name,
+                    "source_url": source.url,
+                    "created_at": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+                    "ingest_status": "raw",
+                    "raw_title": title,
+                    "raw_content": content,
+                    "raw_html": str(article),
+                    "raw_media": json.dumps(images),
+                    "raw_tags": ','.join(keywords_list),
+                    "checksum": checksum,
+                    "parse_error": "",
+                    "debug_info": f"site_link={link}"
+                })
+                if new_top_id is None and link:
+                    new_top_id = link
+            if new_top_id:
+                source.last_id = new_top_id
+        except Exception as e:
+            logger.error(f"Ошибка загрузки или парсинга {source.url}: {e}")
+            news_items.append({
+                "id": "",
+                "source_type": "site",
+                "source_name": getattr(source, 'name', ''),
+                "source_url": getattr(source, 'url', ''),
+                "created_at": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+                "ingest_status": "error",
+                "raw_title": "",
+                "raw_content": "",
+                "raw_html": "",
+                "raw_media": "[]",
+                "raw_tags": "",
+                "checksum": "",
+                "parse_error": str(e),
+                "debug_info": ""
+            })
     two_months_ago = datetime.now() - timedelta(days=60)
     filtered = []
     for item in news_items:
-        dstr = item.get("date", "")
+        dstr = item.get("created_at", "")
         if not dstr:
             filtered.append(item)
             continue
         try:
-            dt = datetime.strptime(dstr, "%Y-%m-%d %H:%M:%S")
+            dt = datetime.strptime(dstr[:19], "%Y-%m-%d %H:%M:%S")
             if dt >= two_months_ago:
                 filtered.append(item)
         except Exception:
             filtered.append(item)
-
     logger.info(f"🌐 Найдено {len(news_items)} новостей с сайта {source.name}, из них за 2 месяца: {len(filtered)}")
     return list(reversed(filtered))
