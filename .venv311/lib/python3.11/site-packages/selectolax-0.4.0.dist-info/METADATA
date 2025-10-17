@@ -1,0 +1,32 @@
+Metadata-Version: 2.4
+Name: selectolax
+Version: 0.4.0
+Summary: Fast HTML5 parser with CSS selectors.
+Home-page: https://github.com/rushter/selectolax
+Author: Artem Golubin
+Author-email: Artem Golubin <me@rushter.com>
+License-Expression: MIT
+Project-URL: Repository, https://github.com/rushter/selectolax
+Project-URL: Documentation, https://selectolax.readthedocs.io/en/latest/parser.html
+Project-URL: Changelog, https://github.com/rushter/selectolax/blob/master/CHANGES.md
+Keywords: selectolax,html,parser,css,fast
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Topic :: Text Processing :: Markup :: HTML
+Classifier: Topic :: Internet
+Classifier: Topic :: Internet :: WWW/HTTP
+Classifier: Intended Audience :: Developers
+Classifier: Natural Language :: English
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Requires-Python: >=3.9
+Description-Content-Type: text/x-rst
+License-File: LICENSE
+Provides-Extra: cython
+Requires-Dist: Cython; extra == "cython"
+Dynamic: author
+Dynamic: home-page
+Dynamic: license-file
