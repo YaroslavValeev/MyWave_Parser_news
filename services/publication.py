@@ -140,8 +140,8 @@ class PublicationService:
 
             try:
                 message = await self._publish_item(channel_id, item)
-            except PublicationSendError as exc:
-                await self._handle_failure(item_id, attempt_count + 1, str(exc.cause))
+            except PublicationSendError as err:
+                await self._handle_failure(item_id, attempt_count + 1, str(err.cause))
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception("Unexpected error while publishing item %s", item_id)
                 await self._handle_failure(item_id, attempt_count + 1, str(exc))

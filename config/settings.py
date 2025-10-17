@@ -1,7 +1,19 @@
 import importlib
 import os
 
-_dotenv_spec = importlib.util.find_spec("dotenv")
+# Some environments or installed packages can shadow or modify the
+# standard-library "importlib" module. Import importlib.util directly
+# when available, and fall back gracefully if it's not present.
+try:
+    from importlib import util as _importlib_util  # type: ignore
+except Exception:
+    _importlib_util = getattr(importlib, "util", None)
+
+if _importlib_util is not None:
+    _dotenv_spec = _importlib_util.find_spec("dotenv")
+else:
+    _dotenv_spec = None
+
 if _dotenv_spec is not None:
     _dotenv_module = importlib.import_module("dotenv")
     load_dotenv = getattr(_dotenv_module, "load_dotenv")

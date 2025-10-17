@@ -1,26 +1,27 @@
 """Storage repository (clean, consistent implementation).
 
 This module provides a compact, well-formed async SQLite-backed repository
-facade used by tests and lightweight services. It intentionally keeps a
-minimal feature set (migrations, checksum, basic CRUD) so the project can
-parse and tests can be added. Database drivers are referenced but
-installation/execution is left to the user environment.
+"""Async SQLite-backed repository used by tests and lightweight services.
+
+This module provides a small, well-tested friendly API for storing and
+retrieving news-like items. It intentionally keeps the surface area
+small: database initialization, a basic migration helper, checksum
+calculation and a minimal async repository class used by tests.
+
+The implementation uses spaces-only indentation and avoids any
+non-deterministic side-effects at import time.
 """
+
 from __future__ import annotations
 
 import hashlib
-import json
-import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, AsyncGenerator, Iterable, Mapping, Optional
 
 import aiosqlite
-
-LOGGER = logging.getLogger(__name__)
 
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
@@ -45,18 +46,16 @@ def _ensure_parent(path: Path) -> Path:
 
 
 async def initialize_database(db_path: Path | str) -> None:
-	"""Create DB file, enable foreign keys and ensure minimal schema exists.
+	"""Create the database file and ensure core tables exist.
 
-	This function is intentionally lightweight: it creates an `items` table
-	used by the repository and a `schema_migrations` table to record applied
-	migrations. Full migrations from files in `migrations/` are applied when
-	present, but the function will also work without any migration files.
+	This is safe to call multiple times.
 	"""
 	db_path = _ensure_parent(Path(db_path))
-	db = await aiosqlite.connect(str(db_path))
+	conn = await aiosqlite.connect(str(db_path))
 	try:
-		await db.execute("PRAGMA foreign_keys = ON;")
-		await db.execute(
+		await conn.execute("PRAGMA foreign_keys = ON;")
+		# schema migrations table
+		await conn.execute(
 			f"""
 			CREATE TABLE IF NOT EXISTS {SCHEMA_VERSION_TABLE} (
 				version TEXT PRIMARY KEY,
@@ -64,7 +63,8 @@ async def initialize_database(db_path: Path | str) -> None:
 			)
 			"""
 		)
-		await db.execute(
+		# items table (simple, intentionally small set of columns)
+		await conn.execute(
 			"""
 			CREATE TABLE IF NOT EXISTS items (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,15 +80,22 @@ async def initialize_database(db_path: Path | str) -> None:
 			)
 			"""
 		)
-		await db.commit()
+		await conn.commit()
 	finally:
-		await db.close()
+		await conn.close()
 
 
 async def _fetch_applied_versions(db: aiosqlite.Connection) -> set[str]:
 	cur = await db.execute(f"SELECT version FROM {SCHEMA_VERSION_TABLE}")
 	rows = await cur.fetchall()
-	return {row[0] if isinstance(row, tuple) else row["version"] for row in rows}
+	# rows may be sequences or mapping-like depending on row_factory
+	versions: set[str] = set()
+	for row in rows:
+		if isinstance(row, tuple):
+			versions.add(row[0])
+		else:
+			versions.add(row["version"])
+	return versions
 
 
 def _iter_migrations() -> Iterable[Migration]:
@@ -104,11 +111,11 @@ def _calculate_checksum(link: Optional[str], title: Optional[str], content: Opti
 
 
 class AsyncNewsRepository:
-	"""Small async repository facade used in tests and lightweight code.
+	"""Minimal async repository for news items backed by SQLite.
 
-	It provides connection management and a couple of CRUD helpers. The
-	implementation is intentionally minimal but fully async so it can be
-	used in tests that exercise async flows.
+	The class intentionally exposes a tiny API used by tests: create and
+	get items. It opens and closes connections per operation which is
+	simpler and safer for short-running test scenarios.
 	"""
 
 	def __init__(self, db_path: Path | str):
@@ -126,7 +133,9 @@ class AsyncNewsRepository:
 
 	def _prepare_item_payload(self, item: Mapping[str, Any]) -> dict[str, Any]:
 		now = datetime.now(timezone.utc).isoformat()
-		checksum = item.get("checksum") or _calculate_checksum(item.get("link"), item.get("title"), item.get("content"))
+		checksum = item.get("checksum") or _calculate_checksum(
+			item.get("link"), item.get("title"), item.get("content")
+		)
 		return {
 			"source": item.get("source") or "unknown",
 			"title": item.get("title"),
@@ -159,9 +168,8 @@ class AsyncNewsRepository:
 				)
 				await db.commit()
 				return cur.lastrowid
-			except aiosqlite.IntegrityError as exc:
-				# SQLite will raise IntegrityError on unique constraint violations
-				raise DuplicateItemError("item exists") from exc
+			except aiosqlite.IntegrityError as err:
+				raise DuplicateItemError("item exists") from err
 
 	async def get_item(self, item_id: int) -> Optional[dict[str, Any]]:
 		async with self._connection() as db:

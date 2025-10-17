@@ -1,3 +1,12 @@
+# Local session string saved by utils/telegram_session.py
+session_string.txt
+*.session
+*.session.bak
+/.venv*/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+downloads/raw_feed_backup.csv
 # .env
 *.session
 logs/

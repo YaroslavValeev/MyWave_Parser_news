@@ -61,6 +61,20 @@ graph TD
 | GOOGLE\_CREDENTIALS\_PATH | Путь до JSON-файла Google |
 | GOOGLE\_SHEET\_ID         | ID Google-таблицы         |
 
+### Telethon: как избежать запроса кода
+
+Для того чтобы Telethon не запрашивал код при каждом запуске, выполните одну интерактивную авторизацию и сохраните строку сессии:
+
+1. Запустите `start_telethon.py` и выполните интерактивный ввод кода при первом запуске.
+2. После успешной авторизации будет создан файл `session_string.txt` (или другой, указанный в `TELETHON_STRING_SESSION_FILE`).
+3. Сохраните значение в переменную окружения `TELETHON_STRING_SESSION` в вашем `.env` или CI-секрете, например:
+
+```env
+TELETHON_STRING_SESSION="<paste-session-string-here>"
+```
+
+Этот файл игнорируется в репозитории (`.gitignore`) — не коммитьте его в публичные репозитории.
+
 ## CI/CD
 
 ![CI](https://github.com/YaroslavValeev/MyWave_Parser_news/actions/workflows/ci.yml/badge.svg)

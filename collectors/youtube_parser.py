@@ -11,6 +11,7 @@ import hashlib
 
 from collectors.telegram_parser import BaseParser
 from utils.helpers import RateLimiter
+from core.models import SourceItem, NewsItem
 
 logger = logging.getLogger(__name__)
 
@@ -170,3 +171,40 @@ def validate_source(self, source):
             else:
                 raise ValueError(f"Некорректный URL YouTube: {source.url}")
         super().validate_source(source)
+
+
+def fetch_youtube(url: str, name: str, filter_keywords=None):
+    """Compatibility wrapper used by `main.py`.
+
+    main.py expects a function `fetch_youtube(url, name)` that returns a
+    list of raw feed items. Build a minimal `SourceItem` and call the
+    existing `parse_youtube` implementation.
+    """
+    src = SourceItem(id=url, name=name, url=url, type="youtube")
+    raw = parse_youtube(src, filter_keywords)
+    # Convert dicts to NewsItem models
+    results = []
+    for r in raw:
+        try:
+            ni = NewsItem(
+                id=r.get('id') or r.get('link') or '',
+                source_type=r.get('source_type', 'youtube'),
+                source_name=r.get('source_name', name),
+                source_url=r.get('source_url', url),
+                created_at=r.get('created_at', ''),
+                ingest_status=r.get('ingest_status', 'raw'),
+                raw_title=r.get('raw_title', ''),
+                raw_content=r.get('raw_content', ''),
+                raw_html=r.get('raw_html', ''),
+                raw_media=r.get('raw_media', ''),
+                lang=r.get('lang', ''),
+                raw_tags=r.get('raw_tags', ''),
+                checksum=r.get('checksum', ''),
+                parse_error=r.get('parse_error', ''),
+                debug_info=r.get('debug_info', ''),
+            )
+            results.append(ni)
+        except Exception:
+            # Skip malformed entries but continue
+            continue
+    return results
