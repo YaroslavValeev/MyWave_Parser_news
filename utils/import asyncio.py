@@ -1564,7 +1564,54 @@ async def save_to_sheet(doc, sheet_name, data_list, existing_checksums=None, ws_
     
     if valid_rows:
         logger.info(f"Добавление {len(valid_rows)} строк в лист {sheet_name} (header-based)")
-        ws.append_rows(valid_rows)
+        # ВАЖНО: gspread append_rows возвращает ответ API с диапазоном вставки.
+        # Для raw_feed это критично: row_number должен соответствовать реальному номеру строки.
+        resp = ws.append_rows(valid_rows, value_input_option="RAW")
+
+        # P0: гарантируем корректный row_number после реальной вставки
+        if sheet_name == "raw_feed":
+            try:
+                # Ожидаемые варианты структуры ответа:
+                # - {"updates": {"updatedRange": "raw_feed!A198:BP198", ...}, ...}
+                # - {"tableRange": "...", "updates": {"updatedRange": "..."}}
+                updated_range = None
+                if isinstance(resp, dict):
+                    updates_obj = resp.get("updates") if resp else None
+                    if isinstance(updates_obj, dict):
+                        updated_range = updates_obj.get("updatedRange")
+
+                if not updated_range or "!" not in updated_range:
+                    raise RuntimeError(f"append_rows не вернул updatedRange (resp keys={list(resp.keys()) if isinstance(resp, dict) else type(resp)})")
+
+                # Парсим начальную строку из формата A198:BP198
+                import re
+                a1_range = updated_range.split("!", 1)[1]
+                start_a1 = a1_range.split(":", 1)[0]
+                m = re.search(r"(\d+)$", start_a1)
+                if not m:
+                    raise RuntimeError(f"Не удалось распарсить номер строки из updatedRange={updated_range}")
+                start_row_num = int(m.group(1))
+
+                rn_col_idx = header_to_idx.get("row_number")
+                if rn_col_idx is None:
+                    raise RuntimeError("P0: row_number отсутствует в header_to_idx после вставки")
+
+                updates = []
+                from gspread.utils import rowcol_to_a1
+                for i in range(len(valid_rows)):
+                    real_row_num = start_row_num + i
+                    cell = rowcol_to_a1(real_row_num, rn_col_idx + 1)
+                    updates.append({"range": cell, "values": [[str(real_row_num)]]})
+
+                if not updates:
+                    raise RuntimeError("P0: пустой updates для row_number")
+
+                ws.batch_update(updates, value_input_option="RAW")
+            except Exception as e:
+                raise RuntimeError(
+                    f"P0: вставка выполнена, но не удалось гарантировать корректный row_number по реальному диапазону вставки: {e}"
+                )
+
         logger.info(f"Добавлено {len(valid_rows)} строк в лист {sheet_name}")
     else:
         logger.warning(f"Нет валидных строк для записи в {sheet_name} (или все дубли)")
@@ -1670,8 +1717,16 @@ def validate_sheet_headers(header_row: list, sheet_name: str = 'raw_feed'):
         # Если значение есть в списке ожидаемых колонок - это точно название колонки
         if value_stripped in RAW_FEED_COLUMNS:
             return True
-        
-        return True
+
+        # P0: Ужесточаем распознавание, чтобы мусор/контент в строке заголовков
+        # (например, заголовки новостей) не ломали запись.
+        # Разрешаем только snake_case латиницей (как принято в таблице).
+        import re
+        if re.match(r"^[a-z][a-z0-9_]{0,63}$", value_lower):
+            return True
+
+        # Всё остальное считаем "не заголовком" (данные/мусор) и игнорируем
+        return False
     
     for idx, header in enumerate(header_row):
         if not header or not header.strip():
