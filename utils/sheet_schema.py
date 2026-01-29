@@ -1,0 +1,171 @@
+"""
+Единая схема колонок для Google Sheets raw_feed.
+Этот модуль является источником правды (single source of truth) для структуры листа raw_feed.
+"""
+
+# Полный список колонок для raw_feed (1:1 с фактической таблицей).
+# ВАЖНО: порядок здесь отражает текущую реальную таблицу, но запись в Sheets должна быть header-based.
+RAW_FEED_COLUMNS = [
+    "id",
+    "source_type",
+    "source_name",
+    "source_url",
+    "created_at",
+    "ingest_status",
+    "raw_title",
+    "raw_content",
+    "raw_html",
+    "raw_media",
+    "lang",
+    "raw_tags",
+    "checksum",
+    "parse_error",
+    "debug_info",
+    "expert_opinion",
+    "need_opinion",
+    "updated_at",
+    "published_posts",
+    "review_queue",
+    "error_log",
+    "final_posts",
+    "user_answers",
+    "summary",
+    "ne",
+    "questions",
+    "user_id",
+    "news_id",
+    "answer_type",
+    "answer_text",
+    "status",
+    "row_number",
+    "canonical_url",
+    "cover_image_url",
+    "published_at",
+    "source_item_id",
+    "original_published_at",
+    "scheduled_at",
+    "content_format",
+    "final_ready",
+    "f_p",
+    "approved_by",
+    "approved_at",
+    "publish_attempts",
+    "publish_last_try_at",
+    "publish_error",
+    "media_json",
+    "slug",
+    "publish_lock_by",
+    "publish_lock_until",
+    "final_version",
+    "text",
+    "raw_id",
+    "ingest_error",
+    "ingest_last_try_at",
+    "process_status",
+    "processed_at",
+    "process_error",
+    "ingest_attempts",
+    "marketing_pack",
+    "excerpt",
+    "content_md",
+    "seo_title",
+    "meta_description",
+    "og_title",
+    "og_description",
+    "schema_json",
+    "telegram_published",
+]
+
+# Значения по умолчанию для полей на этапе ingest
+DEFAULTS = {
+    # Поля, которые должны быть в схеме всегда (даже если пустые при записи)
+    "id": "",
+    "source_type": "",
+    "source_name": "",
+    "source_url": "",
+    "created_at": "",
+    "raw_title": "",
+    "raw_content": "",
+    "checksum": "",
+    "expert_opinion": "",
+    "user_answers": "",
+    "summary": "",
+    "ne": "",
+    "questions": "",
+    "publish_lock_until": "",
+
+    # Базовые статусы/форматы
+    "status": "DRAFT",
+    "ingest_status": "ok",  # Согласно контракту: ok|skipped|error (нижний регистр)
+    "content_format": "text",
+    "lang": "ru",
+
+    # Ошибки/логи
+    "ingest_error": "",
+    "parse_error": "",
+    "process_error": "",
+    "publish_error": "",
+    "error_log": "",
+    "debug_info": "",
+
+    # Счётчики/попытки
+    "ingest_attempts": 1,
+    "publish_attempts": "0",
+
+    # Метки времени (заполняются по месту, если нужно)
+    "ingest_last_try_at": "",
+    "processed_at": "",
+    "updated_at": "",
+    "published_at": "",
+    "approved_at": "",
+    "publish_last_try_at": "",
+    "publish_lock_until": "",
+
+    # Флаги (в Sheets храним строками)
+    "need_opinion": "false",
+    "review_queue": "false",
+    "final_ready": "false",
+
+    # Поля источника/контента
+    "source_item_id": "",
+    "original_published_at": "",
+    "scheduled_at": "",
+    "raw_html": "",
+    "raw_media": "",
+    "raw_tags": "",
+    "media_json": "",
+
+    # Публикация/блокировки
+    "publish_lock_by": "",
+    "approved_by": "",
+    "slug": "",
+    "canonical_url": "",  # По умолчанию пусто; сайт может заполнять после публикации
+
+    # Текстовые поля
+    "final_posts": "",
+    "text": "",
+    "final_version": "",
+    "raw_id": "",
+    "news_id": "",
+    "user_id": "",
+    "answer_type": "",
+    "answer_text": "",
+    "row_number": "",  # КРИТИЧНО: при вставке новой строки должно быть заполнено ботом (fail-fast)
+    "f_p": "",
+
+    # Маркетинг/SEO
+    "marketing_pack": "",
+    "excerpt": "",
+    "content_md": "",
+    "seo_title": "",
+    "meta_description": "",
+    "og_title": "",
+    "og_description": "",
+    "schema_json": "",
+
+    # Интеграционные/прочие
+    "cover_image_url": "",
+    "published_posts": "",
+    "process_status": "",
+    "telegram_published": "",
+}
