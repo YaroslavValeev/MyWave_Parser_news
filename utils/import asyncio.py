@@ -38,6 +38,7 @@ if _root_dir not in sys.path:
 from telegram_session import TelegramSessionManager
 from utils.row_utils import generate_checksum, validate_raw_row
 from utils.sheet_schema import RAW_FEED_COLUMNS, DEFAULTS
+from utils.contract_schema import CONTRACT_COLUMNS, build_contract_rows, SITE_OWNED_FIELDS
 
 # Локальная функция для скачивания медиа из Telegram
 async def download_media(client, message):
@@ -283,7 +284,10 @@ async def init_google_sheets():
             # Автоприведение заголовков листа raw_feed к схеме
             logger.info("Проверка и обновление заголовков листа raw_feed...")
             await ensure_sheet_headers(doc, 'raw_feed')
-            
+            # P1: CONTRACT-лист как единый источник правды по схеме/ownership
+            logger.info("Проверка и обновление листа CONTRACT...")
+            await ensure_contract_sheet(doc)
+
             # Сохраняем документ в кэш
             _gs_doc_cache = doc
             logger.debug("Документ Google Sheets сохранен в кэш")
@@ -1220,12 +1224,16 @@ async def update_sheet_row(doc, sheet_name, item_data, lookup_field='checksum'):
             updated_row.append('')
         
         # Обновляем только те колонки, которые указаны в item_data и существуют в заголовках
+        # P1 Ownership: для raw_feed бот не перетирает SITE-owned поля (canonical_url, publish_*, approved_*, final_version)
         updated_fields = []
         for col_name, col_value in item_data.items():
             if col_name == lookup_field:
                 # Поле поиска не обновляем
                 continue
-            
+            if sheet_name == "raw_feed" and col_name in SITE_OWNED_FIELDS:
+                logger.debug(f"Пропуск SITE-owned поля при update: {col_name}")
+                continue
+
             col_idx = header_to_idx.get(col_name.strip())
             if col_idx is not None:
                 # Обновляем значение по реальному индексу колонки в листе
@@ -1503,6 +1511,18 @@ async def save_to_sheet(doc, sheet_name, data_list, existing_checksums=None, ws_
             "P0: В листе raw_feed отсутствует колонка 'row_number' в заголовках. "
             "Остановка записи, чтобы сайт не сделал небезопасный writeback."
         )
+
+    # P1: идемпотентность — множество (source_type, source_name, source_item_id) для raw_feed
+    existing_source_item_ids = set()
+    if sheet_name == "raw_feed" and all_values and len(all_values) > 1:
+        for col in ("source_type", "source_name", "source_item_id"):
+            if col not in header_to_idx:
+                break
+        else:
+            i_st, i_sn, i_sid = header_to_idx["source_type"], header_to_idx["source_name"], header_to_idx["source_item_id"]
+            for row in all_values[1:]:
+                if len(row) > max(i_st, i_sn, i_sid) and row[i_sid]:
+                    existing_source_item_ids.add((str(row[i_st]).strip(), str(row[i_sn]).strip(), str(row[i_sid]).strip()))
     
     # Преобразуем данные в нужный порядок (header-based)
     valid_rows = []
@@ -1534,11 +1554,22 @@ async def save_to_sheet(doc, sheet_name, data_list, existing_checksums=None, ws_
         if not item.get("ingest_attempts"):
             item["ingest_attempts"] = 1
 
-        if validate_raw_row(item) and item['checksum'] not in seen_checksums:
+        # P1: идемпотентность — приоритет source_item_id: не создаём дубль по (source_type, source_name, source_item_id)
+        if sheet_name == "raw_feed":
+            st, sn, sid = item.get("source_type", ""), item.get("source_name", ""), item.get("source_item_id", "")
+            if sid and (str(st).strip(), str(sn).strip(), str(sid).strip()) in existing_source_item_ids:
+                continue
+        # Fallback: дубль по checksum (если source_item_id пустой или не совпал)
+        if item["checksum"] in seen_checksums:
+            continue
+
+        if validate_raw_row(item):
             # P0: Проставляем row_number ДО вставки (детерминированно)
             if sheet_name == "raw_feed":
                 item_row_number = next_row_number + len(valid_rows)
                 item["row_number"] = str(item_row_number)
+                # P1: новые записи в очередь ревью (TRUE/FALSE как булево в Sheets для корректного чтения сайтом)
+                item["review_queue"] = True
 
             # HEADER-BASED: Формируем row строго по текущим заголовкам листа
             # (порядок колонок в таблице не важен)
@@ -1616,10 +1647,42 @@ async def save_to_sheet(doc, sheet_name, data_list, existing_checksums=None, ws_
     else:
         logger.warning(f"Нет валидных строк для записи в {sheet_name} (или все дубли)")
 
+
+async def ensure_contract_sheet(doc):
+    """
+    P1: Создаёт или обновляет только лист CONTRACT — единый источник правды по схеме raw_feed,
+    ownership и валидации. Не изменяет raw_feed и другие листы.
+    Данные генерируются из utils/contract_schema.py (CONTRACT_VERSION, RAW_FEED_COLUMNS + правила).
+    """
+    try:
+        try:
+            ws = doc.worksheet("CONTRACT")
+        except Exception:
+            ws = doc.add_worksheet(title="CONTRACT", rows=500, cols=len(CONTRACT_COLUMNS))
+            logger.info("Создан лист CONTRACT")
+
+        rows_data = build_contract_rows()
+        # Строка заголовков
+        ws.update("A1", [CONTRACT_COLUMNS], value_input_option="RAW")
+        # Данные: каждая строка — список значений в порядке CONTRACT_COLUMNS
+        if rows_data:
+            data_rows = [[r.get(col, "") for col in CONTRACT_COLUMNS] for r in rows_data]
+            if len(data_rows) > 0:
+                start_cell = "A2"
+                ws.update(start_cell, data_rows, value_input_option="RAW")
+        logger.info(f"Лист CONTRACT обновлён: {len(rows_data)} полей")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка обновления листа CONTRACT: {e}", exc_info=True)
+        return False
+
+
 # --- Структуры столбцов для каждого листа ---
 SHEET_COLUMNS = {
     # Каноничная схема raw_feed (68 колонок) — единый источник истины: utils/sheet_schema.py
     'raw_feed': RAW_FEED_COLUMNS,
+    # P1: CONTRACT — единый источник правды по схеме/ownership/валидации (utils/contract_schema.py)
+    'CONTRACT': CONTRACT_COLUMNS,
     'posts': [
         "id", "final_text", "hashtags", "cta", "published_date", "status", "link_vk", "link_tg", "link_fb", "link_dzen", "post_type", "author_id"
     ],
