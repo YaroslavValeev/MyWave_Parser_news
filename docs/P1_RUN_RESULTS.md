@@ -19,7 +19,8 @@ _Например: 2025-01-28 (или дата последнего прогон
 - В Sheets поле записывается как **булево TRUE** (не строка "true") — подтверждено тестом (`review_queue_value: TRUE`).
 - Ссылка на строку raw_feed с тестовой записью (после прогона тест печатает её в консоль):
   - Шаблон: `https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/edit#gid=1039755742&range=A{номер_строки}`
-  - Вставить сюда после прогона: _________________________________________________
+  - **Ссылка на тестовую строку (прогон 2026-01-30):**  
+    https://docs.google.com/spreadsheets/d/1RJpw2mAMej3a-VC6yKAsKkVQvzGStcjUC7LijNNyn50/edit#gid=1039755742&range=A200
 
 ### 3. Дедупликация по source_item_id
 

@@ -33,13 +33,15 @@ REQ_PUBLISH = "PUBLISH"
 REQ_WRITEBACK = "WRITEBACK"
 REQ_ANALYTICS = "ANALYTICS"
 
-# Поля, которые пишет только сайт (бот не перетирает)
+# Поля, которые пишет только сайт (бот не перетирает при update)
+# review_queue: бот ставит TRUE при вставке новой строки; сайт пишет FALSE после публикации — бот не перетирает
 SITE_OWNED_FIELDS = {
     "canonical_url",
     "final_version",   # финальная версия поста — ownership SITE (по решению PM)
     "approved_by",
     "approved_at",
     "published_at",
+    "review_queue",   # бот ставит TRUE на insert; сайт ставит FALSE после publish — при update бот не перетирает
     "cover_image_url",
     "final_posts",
     "publish_attempts",
@@ -64,7 +66,6 @@ BOT_OWNED_FIELDS = {
     "raw_media",
     "checksum",
     "row_number",
-    "review_queue",
     "draft_version",   # опционально, бот может писать черновую версию
     "ingest_status",
     "ingest_last_try_at",

@@ -30,6 +30,16 @@
 
 ---
 
+## Результат прогона (пример)
+
+- **Ссылка на тестовую строку raw_feed (review_queue=TRUE):**  
+  https://docs.google.com/spreadsheets/d/1RJpw2mAMej3a-VC6yKAsKkVQvzGStcjUC7LijNNyn50/edit#gid=1039755742&range=A200
+- **review_queue:** TRUE (bool) — подтверждено тестом.
+- **Идемпотентность:** повторная вставка с тем же source_item_id не создала вторую строку (no_duplicate: True).
+- **CONTRACT:** лист создан, 69 полей, колонки field_name, owner, required_for, validation_rule, contract_version, updated_at.
+
+---
+
 ## Запуск P1 проверок
 
 ```bash
