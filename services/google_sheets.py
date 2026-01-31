@@ -21,7 +21,40 @@ class GoogleSheets:
     """
     Совместимый враппер для старых вызовов.
     Для нового кода используйте напрямую `utils.import_asyncio.save_to_sheet/update_sheet_row`.
+    Credentials и sheet_id берутся из config (.env).
     """
+
+    def get_existing_ids(self) -> set:
+        """Возвращает множество существующих id из листа raw_feed."""
+        async def _run():
+            from utils.import_asyncio import init_google_sheets, get_worksheet
+            doc = await init_google_sheets()
+            if not doc:
+                return set()
+            ws = get_worksheet(doc, "raw_feed")
+            if not ws:
+                return set()
+            all_values = ws.get_all_values()
+            if not all_values or len(all_values) < 2:
+                return set()
+            header = all_values[0]
+            try:
+                id_idx = header.index("id")
+            except ValueError:
+                return set()
+            return {row[id_idx] for row in all_values[1:] if len(row) > id_idx and row[id_idx]}
+        return asyncio.run(_run())
+
+    def get_existing_checksums(self) -> set:
+        """Возвращает множество существующих checksum из листа raw_feed."""
+        async def _run():
+            from utils.import_asyncio import init_google_sheets
+            from utils.sheet_gateway import get_existing_checksums as get_checksums
+            doc = await init_google_sheets()
+            if not doc:
+                return set()
+            return await get_checksums(doc, "raw_feed")
+        return asyncio.run(_run())
 
     def append_news_batch(self, news_items: Iterable[Any]) -> None:
         """

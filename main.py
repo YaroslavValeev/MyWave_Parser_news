@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 def main():
     try:
         logger.info("Инициализация Google Sheets...")
-        sheets = GoogleSheets("credentials.json", "1RJpw2mAMej3a-VC6yKAsKkVQvzGStcjUC7LijNNyn50")
+        sheets = GoogleSheets()  # credentials и sheet_id из config (.env)
         existing_ids = sheets.get_existing_ids()
         existing_checksums = sheets.get_existing_checksums()
 
