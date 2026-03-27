@@ -8,6 +8,7 @@ __pycache__/
 .mypy_cache/
 downloads/raw_feed_backup.csv
 # .env
+credentials.json
 *.session
 logs/
 __pycache__/
