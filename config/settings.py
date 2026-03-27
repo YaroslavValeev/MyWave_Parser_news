@@ -48,7 +48,7 @@ class Config:
     OWNER_USER_ID = os.getenv("OWNER_USER_ID")
 
     # Интеграции Google/YouTube
-    GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE")
+    GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
     GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
     YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
