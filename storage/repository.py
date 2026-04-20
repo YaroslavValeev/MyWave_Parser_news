@@ -1,6 +1,3 @@
-"""Storage repository (clean, consistent implementation).
-
-This module provides a compact, well-formed async SQLite-backed repository
 """Async SQLite-backed repository used by tests and lightweight services.
 
 This module provides a small, well-tested friendly API for storing and
