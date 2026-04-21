@@ -1,16 +1,30 @@
-"""Устойчивый entrypoint редакторского Telegram-бота (aiogram v3)."""
+"""Устойчивый entrypoint редакторского Telegram-бота (aiogram v2/v3)."""
 from __future__ import annotations
 
 import asyncio
 import logging
 from contextlib import suppress
-from typing import Optional
+from typing import Any, Optional
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from aiogram.filters import Command
-from aiogram.types import Message
+
+try:
+    # aiogram v3 imports
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+    from aiogram.filters import Command
+    from aiogram.types import Message
+
+    AIROGRAM_V3 = True
+except Exception:
+    # aiogram v2 fallback
+    from aiogram import executor, types as aio_types
+
+    DefaultBotProperties = None  # type: ignore[assignment]
+    ParseMode = None  # type: ignore[assignment]
+    Command = None  # type: ignore[assignment]
+    Message = Any  # type: ignore[assignment]
+    AIROGRAM_V3 = False
 
 from config.settings import config
 from services.scheduler import SchedulerService
@@ -47,7 +61,7 @@ async def _review_notifier(bot: Bot, repository) -> None:
         await asyncio.sleep(30)
 
 
-async def main() -> None:
+async def _main_v3() -> None:
     if not config.TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN не задан в окружении")
 
@@ -90,5 +104,61 @@ async def main() -> None:
             await scheduler_service.shutdown()
 
 
+def _main_v2() -> None:
+    if not config.TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN не задан в окружении")
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    bot = Bot(token=config.TELEGRAM_BOT_TOKEN, parse_mode="HTML")
+    dispatcher = Dispatcher(bot)
+    runtime: dict[str, Any] = {"scheduler": None, "notifier": None}
+
+    @dispatcher.message_handler(commands=["start"])
+    async def cmd_start(message: aio_types.Message) -> None:  # type: ignore[name-defined]
+        await message.answer("Бот запущен ✅")
+
+    async def on_startup(_dp):
+        repository = await get_repository()
+        scheduler_service = SchedulerService(repository, bot)
+        runtime["scheduler"] = scheduler_service
+        try:
+            await scheduler_service.start()
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Не удалось запустить SchedulerService; продолжаем без планировщика")
+        else:
+            runtime["notifier"] = asyncio.create_task(_review_notifier(bot, repository))
+
+    async def on_shutdown(_dp):
+        notifier_task = runtime.get("notifier")
+        scheduler_service = runtime.get("scheduler")
+        if notifier_task is not None:
+            notifier_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await notifier_task
+        if scheduler_service is not None:
+            with suppress(Exception):
+                await scheduler_service.shutdown()
+
+    executor.start_polling(  # type: ignore[name-defined]
+        dispatcher,
+        skip_updates=True,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+    )
+
+
+def main() -> None:
+    if AIROGRAM_V3:
+        asyncio.run(_main_v3())
+    else:
+        _main_v2()
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
