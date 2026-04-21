@@ -15,9 +15,22 @@ from core.scheduler import parse_all_sources
 from services.nlp_pipeline import process_nlp_queue
 from services.publication import PublicationService
 from storage.repository import AsyncNewsRepository
-from telegram_bot.views import format_stats
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _format_stats(counts: dict, metrics: dict | None = None) -> str:
+    """Локальный форматтер статистики без зависимости от telegram_bot пакета."""
+    metrics = metrics or {}
+    lines = ["<b>Daily stats</b>"]
+    for key in sorted(counts):
+        lines.append(f"{key}: {counts[key]}")
+    if metrics:
+        lines.append("")
+        lines.append("<b>Metrics</b>")
+        for key in sorted(metrics):
+            lines.append(f"{key}: {metrics[key]}")
+    return "\n".join(lines)
 
 
 class SchedulerService:
@@ -104,7 +117,7 @@ class SchedulerService:
         if not counts:
             return
         metrics = await self._repository.get_processing_summary()
-        text = format_stats(counts, metrics)
+        text = _format_stats(counts, metrics)
         try:
             await self._bot.send_message(chat_id, text, parse_mode="HTML")
         except Exception:  # noqa: BLE001
