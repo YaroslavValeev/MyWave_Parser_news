@@ -51,6 +51,7 @@ class Config:
     GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE")
     GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
     YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+    MEDIA_UPLOAD_TOKEN = os.getenv("MEDIA_UPLOAD_TOKEN")
 
     # Планировщик и интервалы задач
     COLLECT_INTERVAL_MINUTES = int(os.getenv("COLLECT_INTERVAL_MINUTES", "15"))
