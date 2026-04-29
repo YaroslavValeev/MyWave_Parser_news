@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from telethon import types
 from telethon.errors import RPCError
 from config.settings import config
@@ -19,7 +20,7 @@ async def download_media(message: types.Message, download_dir: str = "downloads/
             ext = ".jpg"
             media_type = "photo"
         elif isinstance(message.media, types.MessageMediaDocument):
-            ext = self._get_document_extension(message.media.document)
+            ext = _get_document_extension(message.media.document)
             media_type = "document"
         else:
             return None, None
@@ -35,7 +36,7 @@ async def download_media(message: types.Message, download_dir: str = "downloads/
         logger.error(f"Media download error: {e}")
     return None, None
 
-def _get_document_extension(self, document: types.Document) -> str:
+def _get_document_extension(document: types.Document) -> str:
     """Определяет расширение для документа"""
     for attr in document.attributes:
         if isinstance(attr, types.DocumentAttributeFilename):

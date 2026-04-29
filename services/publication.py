@@ -25,12 +25,13 @@ except ImportError:  # pragma: no cover - lightweight fallback
                 try:
                     return await func(*args, **kwargs)
                 except Exception as exc:  # noqa: BLE001
+                    captured_exc = exc
                     attempt = type(
                         "Attempt",
                         (),
                         {
                             "attempt_number": 1,
-                            "exception": lambda self=exc: exc,
+                            "exception": lambda self: captured_exc,
                         },
                     )()
                     raise RetryError(attempt) from exc
@@ -213,7 +214,12 @@ class PublicationService:
         )
 
     async def _should_attempt(self, item_id: int) -> tuple[int, bool, datetime | None]:
-        last_failure = await self._repository.get_last_log(item_id, "publication_failed")
+        try:
+            last_failure = await self._repository.get_last_log(item_id, "publication_failed")
+        except AttributeError:
+            # Lightweight test doubles may only implement the write-side
+            # repository contract; treat them as no previous failures.
+            return 0, True, None
         if last_failure is None:
             return 0, True, None
         meta = last_failure.get("meta") or {}

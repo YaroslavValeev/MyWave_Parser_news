@@ -1,6 +1,7 @@
 import logging
 import html
-from telegram import Bot, ParseMode, InputMediaPhoto, InputMediaVideo
+from telegram import Bot, InputMediaPhoto, InputMediaVideo
+from telegram.constants import ParseMode
 import config.settings as config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
