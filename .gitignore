@@ -3,14 +3,25 @@ session_string.txt
 *.session
 *.session.bak
 /.venv*/
+/venv/
+.venv/
+venv/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
 downloads/raw_feed_backup.csv
-# .env
 credentials.json
+backups/
 *.session
 logs/
 __pycache__/
 *.pyc
 *.log
+# Экспорт owner_* при сбое Google Sheets
+exports/
+data/exports/
+# Состояние round-robin чанков collect_sources (рядом с БД)
+.collect_chunk_index
+.env
+.env.local
+*.pem

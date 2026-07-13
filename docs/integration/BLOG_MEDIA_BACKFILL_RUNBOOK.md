@@ -1,9 +1,20 @@
 # Blog Media Backfill Runbook (docs-only)
 
-**Статус:** `DRAFT — NO EXECUTION`  
+**Статус:** `DRY-RUN READY — NO MASS WRITEBACK`  
 **Владелец:** Parser News / TGbotAdmin (+ Site для API boundary)  
-**Дата:** 2026-06-16  
+**Дата:** 2026-07-13  
 **GM gate:** backfill **запрещён** до отдельного approval (GM + Owner)
+
+Dry-run script:
+
+```bash
+python scripts/blog_media_backfill_dry_run.py --source json --out docs/integration/artifacts/
+# или (read-only Sheets):
+python scripts/blog_media_backfill_dry_run.py --source sheets --out docs/integration/artifacts/
+```
+
+Отчёт: `docs/integration/artifacts/BACKFILL_DRY_RUN_<date>.md` (`proposed_writes=0`).
+
 
 ---
 
@@ -107,13 +118,41 @@ cp /tmp/blog-media-* /opt/bot3/parser-new-bot/docs/integration/artifacts/ 2>/dev
 | **C** | Файл **отсутствует на диске** Site (staging+prod 404), но может быть у Parser | reupload через `POST /api/blog/media/upload` → writeback `cover_image_url` |
 | **D** | **Внешний CDN** HTTP 200 | **не трогать** |
 
-### 3.1. Предварительная классификация (по audit)
+### 3.2. Итог source search (GM, 2026-06-18) — **FINAL**
 
-| Группа | Count | Предварительный класс | Owner backfill |
-|--------|-------|----------------------|----------------|
-| `review_media_missing_both` | 13 | **C** | Parser News (если найден файл) → иначе A + Editor |
-| `placeholders` (Place1Logo) | 10 | **A/B** (уточнить) | Parser + Editor |
-| `external_images` | 7 | **D** | none |
+**13 broken `review_media` строк:**
+
+| Поле | Значение |
+|------|----------|
+| Класс | **C** (valid URL path, file missing on Site disk) + **source missing** на Parser |
+| `Original media found` | **0/13** (`review_*` basenames) |
+| Automatic Parser reupload | **not possible** |
+| `Rows proposed for automatic reupload` | **0** |
+| Proposed action | **manual Owner cover / editor cover / keep placeholder** — решение Owner по каждой строке |
+| Parser execution | **not started** |
+
+Локальный cache Parser (`item-*-owner-cover.jpg`, 10 файлов) **не соответствует** 13 `review_*` именам из Sheet — не использовать для auto-reupload.
+
+### 3.3. Place1Logo: расхождение 10 vs 11
+
+| Источник | Count | Дата среза |
+|----------|-------|------------|
+| Owner audit `blog-media-audit.csv` (`kind=place1logo`) | **10** | 2026-06-16 |
+| Prod API `/api/blog/posts` (рендер fallback) | **11** | 2026-06-18 |
+
+**Дополнительная строка (в API, не в audit 2026-06-16):**
+
+| Поле | Значение |
+|------|----------|
+| `raw_feed` row_number | **88** |
+| id | **112** |
+| slug | `альфа-банк-серф-кап-2026-открыта-регистрация-на-карнавальный-заезд-и-заезды-для-любителей-7f6ffa` |
+| title | 🏄 АЛЬФА-БАНК СЕРФ КАП 2026 — ОТКРЫТА РЕГИСТРАЦИЯ… |
+| class | **A** (пустой `cover_image_url` в Sheet → Site fallback Place1Logo) |
+| reason | Опубликована **после** Owner audit; в `blog-media-audit.csv` отсутствует |
+
+**Канон для GM backfill scope:** `acceptable Place1Logo = **10**` (по audit CSV).  
+Строка id **112** — post-audit; Owner решает отдельно (keep fallback / manual cover).
 
 ---
 
@@ -344,39 +383,42 @@ Backfill на **production** только если:
 Артефакт: `docs/integration/artifacts/blog-media-inventory-from-api-20260616.json`  
 `row_number` из Sheet — после копирования `/tmp/blog-media-audit.csv` на сервер (см. команды ниже).
 
-### A.1. Missing `review_media` — 13 rows (class **C**, prod **404**)
+### A.1. Missing `review_media` — 13 rows (class **C / source missing**)
 
-| idx | slug | title | old `cover_image_url` | staging | prod | disk | class | source (Parser) | proposed action | rollback value |
-|-----|------|-------|----------------------|---------|------|------|-------|-----------------|-----------------|----------------|
-| 12 | `уважаемые-коллеги-0e3a37` | Уважаемые коллеги! | `http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170115_adabf7e1023a.jpg` | 404 | 404 | no | C | scan prod | reupload if file found else manual Owner cover | old `cover_image_url` |
-| 13 | `вебинар-профессиональное-образование-в-серфинге-d82118` | ВЕБИНАР… | `…/review_20260505_170110_a9336ef014a1.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 14 | `делимся-актуальным-списком-каналов-…-f0dd4a` | Делимся актуальным списком… | `…/review_20260506_091734_291cadc78ba3.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 15 | `календарь-спортивных-мероприятий-…-9701a1` | Календарь спортивных мероприятий… | `…/review_20260505_170102_1f39cd4cd258.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 16 | `пост-из-провейксерф-проект-о-вейксерфинге-c08268` | Пост из Провейксерф… | `…/review_20260505_170109_3b9417a1465b.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 18 | `тренировочные-сборы-в-юар-…-8d9a0a` | Тренировочные сборы в ЮАР… | `…/review_20260425_180507_8f47bceb9d81.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 21 | `22-апреля-в-москве-состоялся-форум-sport-b2b-…-70feb6` | 22 апреля… Sport B2B… | `…/review_20260505_170114_7278a093d7c4.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 24 | `уважаемые-коллеги-d1ee59` | Уважаемые коллеги! | `…/review_20260423_122915_b6d68db194f0.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 25 | `готовимся-проверяем-малышек-после-зимы-fb508e` | Готовимся проверяем малышек… | `…/review_20260505_170121_c193cc37be59.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 26 | `международная-федерация-воднолыжного-спорта-…-3e313b` | Международная федерация… | `…/review_20260505_170122_a1a68b2395bb.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 27 | `пост-из-wakedivision-c73dfe` | Пост из WakeDivision | `…/review_20260505_170123_f717d2a27bd5.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 28 | `пост-из-wakedivision-0e5566` | Пост из WakeDivision | `…/review_20260505_170126_6b9ce8ca1616.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
-| 29 | `пост-из-wakediary-82965d` | Пост из Wakediary | `…/review_20260505_170128_ce5fccebdb07.jpg` | 404 | 404 | no | C | scan prod | reupload / manual | old URL |
+**Automatic reupload: 0.** Proposed action for all 13: **manual Owner/editor cover** (or keep placeholder by Owner decision).
 
-### A.2. Place1Logo — 11 rows в API (audit Owner: 10; +1 новая публикация)
+| idx | slug | title | old `cover_image_url` | staging | prod | Parser source | class | proposed action |
+|-----|------|-------|----------------------|---------|------|---------------|-------|-----------------|
+| 12 | `уважаемые-коллеги-0e3a37` | Уважаемые коллеги! | `http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170115_adabf7e1023a.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 13 | `вебинар-профессиональное-образование-в-серфинге-d82118` | ВЕБИНАР… | `…/review_20260505_170110_a9336ef014a1.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 14 | `делимся-актуальным-списком-каналов-…-f0dd4a` | Делимся актуальным списком… | `…/review_20260506_091734_291cadc78ba3.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 15 | `календарь-спортивных-мероприятий-…-9701a1` | Календарь спортивных мероприятий… | `…/review_20260505_170102_1f39cd4cd258.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 16 | `пост-из-провейксерф-проект-о-вейксерфинге-c08268` | Пост из Провейксерф… | `…/review_20260505_170109_3b9417a1465b.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 18 | `тренировочные-сборы-в-юар-…-8d9a0a` | Тренировочные сборы в ЮАР… | `…/review_20260425_180507_8f47bceb9d81.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 21 | `22-апреля-в-москве-состоялся-форум-sport-b2b-…-70feb6` | 22 апреля… Sport B2B… | `…/review_20260505_170114_7278a093d7c4.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 24 | `уважаемые-коллеги-d1ee59` | Уважаемые коллеги! | `…/review_20260423_122915_b6d68db194f0.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 25 | `готовимся-проверяем-малышек-после-зимы-fb508e` | Готовимся проверяем малышек… | `…/review_20260505_170121_c193cc37be59.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 26 | `международная-федерация-воднолыжного-спорта-…-3e313b` | Международная федерация… | `…/review_20260505_170122_a1a68b2395bb.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 27 | `пост-из-wakedivision-c73dfe` | Пост из WakeDivision | `…/review_20260505_170123_f717d2a27bd5.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 28 | `пост-из-wakedivision-0e5566` | Пост из WakeDivision | `…/review_20260505_170126_6b9ce8ca1616.jpg` | 404 | 404 | missing | C | manual Owner cover |
+| 29 | `пост-из-wakediary-82965d` | Пост из Wakediary | `…/review_20260505_170128_ce5fccebdb07.jpg` | 404 | 404 | missing | C | manual Owner cover |
 
-| idx | slug | title | class | reason | proposed action | Owner decision |
-|-----|------|-------|-------|--------|-----------------|----------------|
-| 1 | `альфа-банк-серф-кап-2026-…-7f6ffa` | АЛЬФА-БАНК СЕРФ КАП 2026… | A | fallback Place1Logo, медиа не в review_media | keep Place1Logo или manual cover | yes |
-| 2 | `21-июня-в-музее-заповеднике-царицыно-…-2a38a4` | 12-й Международный день йоги… | A | text/event, no uploaded cover | keep / manual | yes |
-| 4 | `18-19-июня-на-базе-вейксерф-клуба-wakedivision-…-093f65` | Кубок Москвы… | A | fallback | keep / manual | yes |
-| 5 | `весна-и-лето-прекрасные-времена-…-72b32a` | Весна и лето… | A | fallback | keep / manual | yes |
-| 6 | `потихоньку-раскачиваем-акваторию-…-d64592` | Потихоньку раскачиваем… | A | fallback | keep / manual | yes |
-| 7 | `дорогие-любименькие-новый-сезон-ура-1c383c` | Новый сезон! Ура!! | A | fallback | keep / manual | yes |
-| 9 | `с-днем-победы-309928` | С Днём Победы! | A | fallback | keep / manual | yes |
-| 11 | `wsws-centurion-wake-surf-japan-open-2025-…-46771d` | WSWS Japan Open 2025 | A | fallback | keep / manual | yes |
-| 17 | `ждемс-7f53f8` | Ждемс👀 | A | fallback | keep / manual | yes |
-| 22 | `начинаем-собирать-календарь-международных-соревнований-2026-e56b06` | Календарь соревнований 2026 | A | fallback | keep / manual | yes |
-| 23 | `федерация-водных-лыж-и-вэйкборда-…-6c1da8` | Расписание соревнований | A | fallback | keep / manual | yes |
+### A.2. Place1Logo — **10** rows (Owner audit CSV 2026-06-16, class **A**)
+
+| slug (short) | title | class | proposed action | Owner decision |
+|--------------|-------|-------|-----------------|----------------|
+| `21-июня-…-2a38a4` | 12-й Международный день йоги… | A | keep Place1Logo / manual | yes |
+| `18-19-июня-…-093f65` | Кубок Москвы Wakedivision… | A | keep / manual | yes |
+| `весна-и-лето-…-72b32a` | Весна и лето… | A | keep / manual | yes |
+| `потихоньку-…-d64592` | Потихоньку раскачиваем… | A | keep / manual | yes |
+| `дорогие-любименькие-…-1c383c` | Новый сезон! Ура!! | A | keep / manual | yes |
+| `с-днем-победы-309928` | С Днём Победы! | A | keep / manual | yes |
+| `wsws-centurion-…-46771d` | WSWS Japan Open 2025 | A | keep / manual | yes |
+| `ждемс-7f53f8` | Ждемс👀 | A | keep / manual | yes |
+| `начинаем-собирать-…-e56b06` | Календарь соревнований 2026 | A | keep / manual | yes |
+| `федерация-водных-лыж-…-6c1da8` | Расписание соревнований | A | keep / manual | yes |
+
+**Post-audit (+1, не в audit 2026-06-16):** `row_number=88`, `id=112`, slug `альфа-банк-серф-кап-2026-…-7f6ffa`, title «АЛЬФА-БАНК СЕРФ КАП 2026…», class **A** — Owner decision отдельно.
 
 ### A.3. External CDN — 7 rows (class **D**, no action)
 
@@ -394,35 +436,48 @@ Backfill на **production** только если:
 
 ---
 
-## Appendix B — GM response (Parser News, 2026-06-16)
+## Appendix B — GM final response (Parser News, 2026-06-18)
 
 ```text
-Runbook PR: docs/integration/BLOG_MEDIA_BACKFILL_RUNBOOK.md
-Branch: docs/blog-media-backfill-runbook-parser
-Artifacts copied: partial (API inventory yes; Owner /tmp CSV pending server scp)
+Runbook PR / commit:
+  docs/integration/BLOG_MEDIA_BACKFILL_RUNBOOK.md
+  Branch: docs/blog-media-backfill-runbook-parser
+  Commit: 91d5e1d
+
+Artifacts on VPS: yes
+SOURCE_SCAN file: docs/integration/artifacts/SOURCE_SCAN_20260618.txt
+
 Rows classified:
-- review_media C/missing: 13
-- Place1Logo A: 11 (Owner audit was 10; +1 new post in API)
-- external D: 7
+  review_media C/source missing: 13
+  manual Owner cover: 13
+  acceptable Place1Logo: 10
+  external D: 7
 
-Original media search:
-- locations checked (local/API): prod API 404 on all 13 review_media paths
-- prod filesystem/downloads: pending server read-only scan (commands in §12)
-- files found count: 0 (until prod scan)
-- files missing count: 13/13 review_media basenames on prod disk (404)
+Count discrepancy explanation:
+  "11 Place1Logo" was prod API count on 2026-06-18 (rendered fallbacks).
+  Owner audit CSV 2026-06-16 has placeholders=10.
+  Extra row (post-audit, not in audit CSV):
+    row_number=88, id=112,
+    slug=альфа-банк-серф-кап-2026-открыта-регистрация-на-карнавальный-заезд-и-заезды-для-любителей-7f6ffa,
+    title=АЛЬФА-БАНК СЕРФ КАП 2026…, class=A.
 
-Rows proposed for reupload: 0–13 (after prod scan; if 0 found → 0)
-Rows proposed for manual Owner cover: 13 (if prod scan finds 0 files)
-Rows acceptable as Place1Logo: 11
+13 review_media rows = class C with source missing.
+Proposed action = manual Owner cover / editor cover / keep placeholder by Owner decision.
+Rows proposed for automatic reupload = 0.
 
-Sheet fields to update: cover_image_url (primary); optional image_url, images, media_json
-Cache invalidate endpoint: POST https://mywavewake.ru/api/blog/cache/invalidate
-Rollback plan: §6 raw_feed_snapshot + change table
-Execution not started: yes
-Production touched: no
+Original media search locations checked:
+  downloads/review_media, media/, downloads/, journalctl, diagnose_raw_feed_media, check_media_flow
+
+Original media found: 0/13
+Rows proposed for reupload: 0
+
+Parser prod smoke: upload empty 400 OK, cache invalidate 200 OK
 Sheet changed: no
-Need from Owner: /tmp/blog-media-*.csv/json → docs/integration/artifacts/ (row_number)
-Need from Site: confirm PR #32 merge or link artifacts in PR #32
+Execution not started: yes
+Production deploy: no
+
+Need from Owner: manual cover decisions for 13 review_media rows; optional decision on id=112
+Need from Site: fix HTTP 500 on POST /api/blog/media/upload (diag item-112)
 ```
 
 ---
@@ -438,8 +493,19 @@ Need from Site: confirm PR #32 merge or link artifacts in PR #32
 
 ---
 
-**Версия:** 1.1  
-**Статус:** REVIEWABLE (Appendix A filled); Owner `row_number` — после scp `/tmp/blog-media-audit.csv`
+**Версия:** 1.3  
+**Статус (GM 2026-06-18):**
+
+```text
+Parser source scan: CLOSED
+Site upload blocker: CLOSED (PR45 hotfix)
+Parser post-PR45 smoke: PASS (201, public_url prod, no localhost)
+Backfill execution: BLOCKED (no GM/Owner approval)
+Sheet changed: no
+```
+
+**Future upload** (новые публикации, owner cover after comment): **READY**.  
+**13-row backfill / mass upload / Sheet writeback:** **запрещено** без отдельного approval.
 
 ---
 

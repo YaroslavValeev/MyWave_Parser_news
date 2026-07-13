@@ -1,0 +1,10 @@
+title = "ParserNews gitleaks"
+
+[allowlist]
+description = "Local runtime secrets and venvs must not be scanned as committed"
+paths = [
+  '''(^|/)\.venv(/|$)''',
+  '''(^|/)venv(/|$)''',
+  '''(^|/)\.git(/|$)''',
+  '''docs/integration/artifacts/.*''',
+]
