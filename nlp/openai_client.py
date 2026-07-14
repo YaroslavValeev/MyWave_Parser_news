@@ -1,15 +1,3 @@
-"""Обёртка над OpenAI SDK для задач NLP проекта."""
-from __future__ import annotations
-
-import asyncio
-import importlib
-import os
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, TYPE_CHECKING
-
-from config.settings import config
-"""Обёртка над OpenAI SDK для задач NLP проекта."""
 from __future__ import annotations
 
 import asyncio
@@ -47,7 +35,7 @@ class OpenAISettings:
 
 
 class OpenAIClient:
-    """Упрощённый фасад для текстовых, аудио- и визуальных задач."""
+    """РЈРїСЂРѕС‰С‘РЅРЅС‹Р№ С„Р°СЃР°Рґ РґР»СЏ С‚РµРєСЃС‚РѕРІС‹С…, Р°СѓРґРёРѕ- Рё РІРёР·СѓР°Р»СЊРЅС‹С… Р·Р°РґР°С‡."""
 
     def __init__(
         self,
@@ -66,11 +54,11 @@ class OpenAIClient:
         lang: str | None = None,
         max_words: int = 120,
     ) -> str:
-        """Сформировать краткое саммари текста."""
+        """РЎС„РѕСЂРјРёСЂРѕРІР°С‚СЊ РєСЂР°С‚РєРѕРµ СЃР°РјРјР°СЂРё С‚РµРєСЃС‚Р°."""
 
         prompt = (
-            "Сделай краткое новостное резюме до {max_words} слов."
-            " Используй язык {lang}."
+            "РЎРґРµР»Р°Р№ РєСЂР°С‚РєРѕРµ РЅРѕРІРѕСЃС‚РЅРѕРµ СЂРµР·СЋРјРµ РґРѕ {max_words} СЃР»РѕРІ."
+            " Р�СЃРїРѕР»СЊР·СѓР№ СЏР·С‹Рє {lang}."
         ).format(max_words=max_words, lang=lang or self._settings.default_language)
         response = await self._chat_completion(
             prompt,
@@ -85,22 +73,22 @@ class OpenAIClient:
         *,
         lang: str | None = None,
     ) -> list[str]:
-        """Сгенерировать уточняющие вопросы по тексту."""
+        """РЎРіРµРЅРµСЂРёСЂРѕРІР°С‚СЊ СѓС‚РѕС‡РЅСЏСЋС‰РёРµ РІРѕРїСЂРѕСЃС‹ РїРѕ С‚РµРєСЃС‚Сѓ."""
 
         prompt = (
-            "Сформулируй {n} уточняющих вопроса к материалу на языке {lang}."
-            " Ответ верни списком с дефисами."
+            "РЎС„РѕСЂРјСѓР»РёСЂСѓР№ {n} СѓС‚РѕС‡РЅСЏСЋС‰РёС… РІРѕРїСЂРѕСЃР° Рє РјР°С‚РµСЂРёР°Р»Сѓ РЅР° СЏР·С‹РєРµ {lang}."
+            " РћС‚РІРµС‚ РІРµСЂРЅРё СЃРїРёСЃРєРѕРј СЃ РґРµС„РёСЃР°РјРё."
         ).format(n=n, lang=lang or self._settings.default_language)
         response = await self._chat_completion(prompt, text)
         items = [
-            line.strip("-• \t ")
+            line.strip("-вЂў \t ")
             for line in response.splitlines()
             if line.strip()
         ]
         return [item for item in items if item]
 
     async def moderate(self, text: str) -> dict[str, Any]:
-        """Выполнить модерацию контента."""
+        """Р’С‹РїРѕР»РЅРёС‚СЊ РјРѕРґРµСЂР°С†РёСЋ РєРѕРЅС‚РµРЅС‚Р°."""
 
         client = await self._ensure_client()
         result = await client.moderations.create(
@@ -124,7 +112,7 @@ class OpenAIClient:
         *,
         lang: str | None = None,
     ) -> str:
-        """Расшифровать аудиофайл с помощью Whisper."""
+        """Р Р°СЃС€РёС„СЂРѕРІР°С‚СЊ Р°СѓРґРёРѕС„Р°Р№Р» СЃ РїРѕРјРѕС‰СЊСЋ Whisper."""
 
         client = await self._ensure_client()
         language = lang or self._settings.default_language
@@ -151,12 +139,12 @@ class OpenAIClient:
         *,
         style_hint: str | None = None,
     ) -> dict[str, Any]:
-        """Сгенерировать изображение-обложку для публикации."""
+        """РЎРіРµРЅРµСЂРёСЂРѕРІР°С‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ-РѕР±Р»РѕР¶РєСѓ РґР»СЏ РїСѓР±Р»РёРєР°С†РёРё."""
 
         client = await self._ensure_client()
-        prompt = "минималистичная обложка по теме: {title}".format(title=title)
+        prompt = "РјРёРЅРёРјР°Р»РёСЃС‚РёС‡РЅР°СЏ РѕР±Р»РѕР¶РєР° РїРѕ С‚РµРјРµ: {title}".format(title=title)
         if style_hint:
-            prompt = f"{prompt}. Стиль: {style_hint}"
+            prompt = f"{prompt}. РЎС‚РёР»СЊ: {style_hint}"
         response = await client.images.generate(
             model=self._settings.image_model,
             prompt=prompt,
@@ -175,21 +163,21 @@ class OpenAIClient:
         *,
         lang: str | None = None,
     ) -> str:
-        """Переписать текст с учётом комментариев автора."""
+        """РџРµСЂРµРїРёСЃР°С‚СЊ С‚РµРєСЃС‚ СЃ СѓС‡С‘С‚РѕРј РєРѕРјРјРµРЅС‚Р°СЂРёРµРІ Р°РІС‚РѕСЂР°."""
 
         prompt = (
-            "Перепиши текст в формате заметки от первого лица,"
-            " опираясь на комментарии автора."
-            " Сохрани деловой стиль и русский язык."
+            "РџРµСЂРµРїРёС€Рё С‚РµРєСЃС‚ РІ С„РѕСЂРјР°С‚Рµ Р·Р°РјРµС‚РєРё РѕС‚ РїРµСЂРІРѕРіРѕ Р»РёС†Р°,"
+            " РѕРїРёСЂР°СЏСЃСЊ РЅР° РєРѕРјРјРµРЅС‚Р°СЂРёРё Р°РІС‚РѕСЂР°."
+            " РЎРѕС…СЂР°РЅРё РґРµР»РѕРІРѕР№ СЃС‚РёР»СЊ Рё СЂСѓСЃСЃРєРёР№ СЏР·С‹Рє."
         )
         if lang:
             prompt = (
-                "Перепиши текст на языке {lang} в стиле личной заметки,"
-                " учитывая комментарии автора."
+                "РџРµСЂРµРїРёС€Рё С‚РµРєСЃС‚ РЅР° СЏР·С‹РєРµ {lang} РІ СЃС‚РёР»Рµ Р»РёС‡РЅРѕР№ Р·Р°РјРµС‚РєРё,"
+                " СѓС‡РёС‚С‹РІР°СЏ РєРѕРјРјРµРЅС‚Р°СЂРёРё Р°РІС‚РѕСЂР°."
             ).format(lang=lang)
         response = await self._chat_completion(
             prompt,
-            f"Оригинальное саммари:\n{base_summary}\n\nКомментарий автора:\n{author_notes}",
+            f"РћСЂРёРіРёРЅР°Р»СЊРЅРѕРµ СЃР°РјРјР°СЂРё:\n{base_summary}\n\nРљРѕРјРјРµРЅС‚Р°СЂРёР№ Р°РІС‚РѕСЂР°:\n{author_notes}",
         )
         return _normalize_text(response)
 
@@ -230,7 +218,7 @@ _global_lock = asyncio.Lock()
 
 
 async def get_openai_client() -> OpenAIClient:
-    """Лениво инициализировать общий экземпляр клиента."""
+    """Р›РµРЅРёРІРѕ РёРЅРёС†РёР°Р»РёР·РёСЂРѕРІР°С‚СЊ РѕР±С‰РёР№ СЌРєР·РµРјРїР»СЏСЂ РєР»РёРµРЅС‚Р°."""
 
     global _global_client
     async with _global_lock:
@@ -240,7 +228,7 @@ async def get_openai_client() -> OpenAIClient:
 
 
 def configure_openai_client(client: OpenAIClient | None) -> None:
-    """Переопределить глобальный клиент (удобно для тестов)."""
+    """РџРµСЂРµРѕРїСЂРµРґРµР»РёС‚СЊ РіР»РѕР±Р°Р»СЊРЅС‹Р№ РєР»РёРµРЅС‚ (СѓРґРѕР±РЅРѕ РґР»СЏ С‚РµСЃС‚РѕРІ)."""
 
     global _global_client
     _global_client = client

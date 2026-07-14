@@ -1,0 +1,3 @@
+﻿id,slug,status,title,cover_image_url,video_url,embed_url,media_status,media_error,provider,flags,proposed_writes
+sample-1,sample-youtube,READY_TO_PUBLISH,Sample with youtube in body,downloads/review_media/x.jpg,,,missing,no_media_found,,"video_only_in_content,invalid_media,local_path,missing_source_attribution",0
+sample-2,sample-ok,PUBLISHED,OK external cover,https://cdn.example.com/cover.jpg,https://www.youtube.com/watch?v=abcdefghijk,https://www.youtube.com/embed/abcdefghijk,external_video,,youtube,has_structured_video,0
