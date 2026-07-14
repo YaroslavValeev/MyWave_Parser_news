@@ -16,8 +16,9 @@
 | Role | Value | Notes |
 |------|-------|-------|
 | **RELEASE_SHA** | resolve after fetch (see deploy) | Must equal `git rev-parse HEAD` after checkout |
-| **Evidence tip (P0 gate push)** | `dfa137902bb474d2d9cee5e811bc962177fc9573` | Update PR comment if tip moves |
+| **Evidence tip (PR-B hotfix)** | `e5dd8feab920a4bbb1f1a120062751f85d34919b` | `create_router(repo, bot) -> Router` |
 | **ROLLBACK_SHA** (`origin/main`) | `a2c5d439212cf22d22771435fabe334017999002` | Fixed rollback target |
+| **Emergency file backup** | `/opt/bot3/parser-new-bot.bak.20260714_1452` | Prefer over broken stub SHA if bot won't start |
 
 После deploy:
 
@@ -128,3 +129,28 @@ python scripts/check_bot_health.py
 ```
 
 Sheets: ручной откат строки по snapshot (не автоматический).
+
+---
+
+## Emergency restore (no git / broken stub SHA)
+
+Если `fatal: not a git repository` **или** crash
+`ValueError: router should be instance of Router not 'coroutine'`
+на SHA `c7d6a37` / `f1df38f` — **не** оставаться на stub: вернуть рабочий tree из бэкапа.
+
+```bash
+sudo systemctl stop parser-news-bot
+cd /opt/bot3
+mv parser-new-bot "parser-new-bot.broken.$(date +%Y%m%d_%H%M)"
+cp -a parser-new-bot.bak.20260714_1452 parser-new-bot
+# fallback, если bak недоступен:
+# cp -a parser-new-bot.old parser-new-bot
+sudo systemctl start parser-news-bot
+sudo systemctl is-active parser-news-bot
+journalctl -u parser-news-bot -n 25 --no-pager
+```
+
+Ожидаемо: `active`, `Start polling`, `@MyWaveParcer_bot`.
+
+Повторный git-deploy только после Owner GO и SHA **`e5dd8feab920a4bbb1f1a120062751f85d34919b`**
+(или более нового tip PR-B), с копированием `.env` / `credentials.json` / `data/` из bak.
