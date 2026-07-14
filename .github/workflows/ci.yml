@@ -98,9 +98,10 @@ jobs:
           python - <<'PY'
           import ast
           from pathlib import Path
+          skip_parts = {".venv", "venv", ".venv311", ".git", "migrations", "site-packages", "_aiosqlite_local_backup"}
           bad = []
           for path in Path(".").rglob("*.py"):
-              if any(part in {".venv", "venv", ".git", "migrations"} for part in path.parts):
+              if any(part in skip_parts or part.startswith(".venv") for part in path.parts):
                   continue
               src = path.read_text(encoding="utf-8", errors="replace")
               if src.count("from __future__ import annotations") > 1:

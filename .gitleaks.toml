@@ -6,6 +6,7 @@ title = "ParserNews gitleaks"
 description = "Ignore ephemeral local virtualenvs and git internals only"
 paths = [
   '''(^|/)\.venv(/|$)''',
+  '''(^|/)\.venv[^/]*/''',
   '''(^|/)venv(/|$)''',
   '''(^|/)\.git(/|$)''',
 ]

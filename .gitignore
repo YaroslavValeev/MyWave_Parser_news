@@ -5,6 +5,7 @@ session_string.txt
 /.venv*/
 /venv/
 .venv/
+.venv311/
 venv/
 __pycache__/
 .pytest_cache/
