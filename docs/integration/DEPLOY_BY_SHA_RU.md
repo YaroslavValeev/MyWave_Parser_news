@@ -15,7 +15,7 @@
 
 | Role | SHA | Notes |
 |------|-----|-------|
-| **RELEASE_SHA** (PR #6 head / candidate) | `3a45f51d7cac16ac9884c9f312d8af0b95341153` | HOLD until rotation complete |
+| **RELEASE_SHA** (PR #6 head / candidate) | `e3650acba22772cc6572664730f64ac12ccc28b1` | HOLD until rotation complete |
 | **ROLLBACK_SHA** (current `origin/main`) | `a2c5d439212cf22d22771435fabe334017999002` | Last known main before PR #6 |
 
 После каждого нового push в PR обновляйте RELEASE_SHA в этом файле и в PR комментарии.
@@ -40,7 +40,7 @@ systemctl is-active parser-news-bot
 git remote -v
 git fetch origin
 git rev-parse HEAD
-git cat-file -t 3a45f51d7cac16ac9884c9f312d8af0b95341153
+git cat-file -t e3650acba22772cc6572664730f64ac12ccc28b1
 git ls-files .env credentials.json
 # Expected: empty output from ls-files
 test -f .env && echo env_present || echo env_MISSING
@@ -66,7 +66,7 @@ PY
 ## Exact deploy (Owner GO required)
 
 ```bash
-export RELEASE_SHA=3a45f51d7cac16ac9884c9f312d8af0b95341153
+export RELEASE_SHA=e3650acba22772cc6572664730f64ac12ccc28b1
 export ROLLBACK_SHA=a2c5d439212cf22d22771435fabe334017999002
 
 cd /opt/bot3/parser-new-bot
@@ -74,7 +74,7 @@ sudo systemctl stop parser-news-bot
 git fetch origin
 git checkout --force "$RELEASE_SHA"
 git rev-parse HEAD
-# Expected: 3a45f51d7cac16ac9884c9f312d8af0b95341153
+# Expected: e3650acba22772cc6572664730f64ac12ccc28b1
 
 source venv/bin/activate
 pip install -r requirements.txt
