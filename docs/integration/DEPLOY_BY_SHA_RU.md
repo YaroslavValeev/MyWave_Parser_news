@@ -11,21 +11,26 @@
 
 ---
 
-## Release pins (обновлять при каждом candidate release)
+## Release pins
 
-| Role | SHA | Notes |
-|------|-----|-------|
-| **RELEASE_SHA** (PR #6 head / candidate) | `e3650acba22772cc6572664730f64ac12ccc28b1` | HOLD until rotation complete |
-| **ROLLBACK_SHA** (current `origin/main`) | `a2c5d439212cf22d22771435fabe334017999002` | Last known main before PR #6 |
+| Role | Value | Notes |
+|------|-------|-------|
+| **RELEASE_SHA** | resolve after fetch (see deploy) | Must equal `git rev-parse HEAD` after checkout |
+| **Evidence tip (P0 gate push)** | `38e6d87b9c952edb48e03b7ff8f3a950d7dc4915` | Update PR comment if tip moves |
+| **ROLLBACK_SHA** (`origin/main`) | `a2c5d439212cf22d22771435fabe334017999002` | Fixed rollback target |
 
-После каждого нового push в PR обновляйте RELEASE_SHA в этом файле и в PR комментарии.
+После deploy:
+
+```bash
+git rev-parse HEAD | tee /tmp/parsernews-deployed-sha.txt
+```
 
 ---
 
 ## Gate before deploy
 
 - [ ] [`OWNER_ROTATION_CHECKLIST.md`](../security/OWNER_ROTATION_CHECKLIST.md) — no `pending Owner` for used credentials
-- [ ] CI green on RELEASE_SHA (pytest + secret-scan-tree)
+- [ ] CI green on RELEASE_SHA (pytest + `secret-scan-tree`)
 - [ ] Dry-run: `proposed_writes=0`
 - [ ] Owner GO: `GO deploy ParserNews <RELEASE_SHA>`
 
@@ -39,26 +44,16 @@ hostname -I
 systemctl is-active parser-news-bot
 git remote -v
 git fetch origin
-git rev-parse HEAD
-git cat-file -t e3650acba22772cc6572664730f64ac12ccc28b1
+export RELEASE_SHA=$(git rev-parse origin/feat/blog-media-editorial-pipeline)
+export ROLLBACK_SHA=a2c5d439212cf22d22771435fabe334017999002
+echo "RELEASE_SHA=$RELEASE_SHA"
+echo "ROLLBACK_SHA=$ROLLBACK_SHA"
+git cat-file -t "$RELEASE_SHA"
 git ls-files .env credentials.json
 # Expected: empty output from ls-files
 test -f .env && echo env_present || echo env_MISSING
 test -f credentials.json && echo gcp_present || echo gcp_MISSING
-# Presence only — never cat/print secrets
-python3 - <<'PY'
-import os
-from pathlib import Path
-# Load .env keys names only if python-dotenv available; else skip
-keys = [
-  "TELEGRAM_BOT_TOKEN","OPENAI_API_KEY","YOUTUBE_API_KEY",
-  "MEDIA_UPLOAD_TOKEN","TELEGRAM_API_HASH_USER","PROXY_PASS",
-]
-# Do not print values
-for k in keys:
-    print(f"{k}={'set' if os.environ.get(k) else 'unset_in_process'}")
-print("use systemctl EnvironmentFile or manual check that prod .env was rotated")
-PY
+# Never cat/print secret values
 ```
 
 ---
@@ -66,15 +61,15 @@ PY
 ## Exact deploy (Owner GO required)
 
 ```bash
-export RELEASE_SHA=e3650acba22772cc6572664730f64ac12ccc28b1
+cd /opt/bot3/parser-new-bot
+git fetch origin
+export RELEASE_SHA=$(git rev-parse origin/feat/blog-media-editorial-pipeline)
 export ROLLBACK_SHA=a2c5d439212cf22d22771435fabe334017999002
 
-cd /opt/bot3/parser-new-bot
 sudo systemctl stop parser-news-bot
-git fetch origin
 git checkout --force "$RELEASE_SHA"
-git rev-parse HEAD
-# Expected: e3650acba22772cc6572664730f64ac12ccc28b1
+git rev-parse HEAD | tee /tmp/parsernews-deployed-sha.txt
+# Expected: equals $RELEASE_SHA
 
 source venv/bin/activate
 pip install -r requirements.txt
@@ -92,7 +87,7 @@ sudo systemctl status parser-news-bot --no-pager
 python scripts/check_bot_health.py
 ```
 
-**Expected:** `active (running)`, health exit 0, `HEAD` == RELEASE_SHA.
+**Expected:** `active (running)`, health exit 0, `HEAD` == `$RELEASE_SHA`.
 
 ---
 
@@ -111,7 +106,7 @@ Telegram Admin (manual): один материал → Retry media → Approve.
 Site: одна Blog-карточка с корректным cover/video.  
 **Mass Sheet writes:** запрещены (`proposed_writes=0` до отдельного Owner GO).
 
-Controlled post details: [`CONTROLLED_POST_E2E.md`](CONTROLLED_POST_E2E.md).
+Details: [`CONTROLLED_POST_E2E.md`](CONTROLLED_POST_E2E.md).
 
 ---
 
