@@ -16,7 +16,7 @@
 | Role | Value | Notes |
 |------|-------|-------|
 | **RELEASE_SHA** | resolve after fetch (see deploy) | Must equal `git rev-parse HEAD` after checkout |
-| **Evidence tip (P0 gate push)** | set after CI-green tip (see PR #6) | Update this cell when tip moves |
+| **Evidence tip (P0 gate push)** | `e1f21698ede1cb09cb27667aeb90c532797a8ba7` | Update PR comment if tip moves |
 | **ROLLBACK_SHA** (`origin/main`) | `a2c5d439212cf22d22771435fabe334017999002` | Fixed rollback target |
 
 После deploy:

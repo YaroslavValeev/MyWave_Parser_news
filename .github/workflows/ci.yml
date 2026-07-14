@@ -94,6 +94,8 @@ jobs:
           poetry install || pip install -r requirements.txt
 
       - name: Verify bot_aiogram dependency closure
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           python - <<'PY'
           import ast
@@ -123,6 +125,8 @@ jobs:
           ruff check bot.py services/ utils/ telegram_bot/ core/ --select E9,F63,F7,F82
 
       - name: Run P0 gate pytest suite
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pip install pytest pytest-asyncio
           pytest -q --tb=short \
