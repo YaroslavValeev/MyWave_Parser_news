@@ -7,25 +7,51 @@ on:
     branches: [ main, dev ]
 
 jobs:
-  secret-scan:
+  secret-scan-tree:
+    name: Secret scan (current tree)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Gitleaks secret scan (working tree)
+      - name: Gitleaks current working tree
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # History purge — Owner step; CI guards the current tree after untrack.
-          args: --no-git --config .gitleaks.toml
+          # Guard committed + checked-out files (not full history).
+          args: --no-git --config .gitleaks.toml --verbose
+
+  secret-scan-history:
+    name: Secret scan (git history report)
+    runs-on: ubuntu-latest
+    # History rewrite is Owner GO. Until HISTORY_PURGE_PLAN is executed,
+    # this job may fail; it must NOT be the only scan (see secret-scan-tree).
+    continue-on-error: true
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks full git history
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --config .gitleaks.toml --verbose --report-path gitleaks-history-report.json
+
+      - name: Upload history scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-history-report
+          path: gitleaks-history-report.json
+          if-no-files-found: ignore
 
   build:
     runs-on: ubuntu-latest
-    needs: secret-scan
+    needs: secret-scan-tree
 
     steps:
       - name: Checkout code

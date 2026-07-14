@@ -1,10 +1,11 @@
 title = "ParserNews gitleaks"
 
+# Minimal allowlist: ignore only local/vendor noise that must never be committed.
+# Do NOT blanket-ignore docs/integration/artifacts — scan report content.
 [allowlist]
-description = "Local runtime secrets and venvs must not be scanned as committed"
+description = "Ignore ephemeral local virtualenvs and git internals only"
 paths = [
   '''(^|/)\.venv(/|$)''',
   '''(^|/)venv(/|$)''',
   '''(^|/)\.git(/|$)''',
-  '''docs/integration/artifacts/.*''',
 ]
