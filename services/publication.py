@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - lightweight fallback
                         (),
                         {
                             "attempt_number": 1,
-                            "exception": lambda self=exc: exc,
+                            "exception": lambda self=exc: self,
                         },
                     )()
                     raise RetryError(attempt) from exc

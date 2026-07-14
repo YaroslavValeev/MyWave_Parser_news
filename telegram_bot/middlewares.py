@@ -1,9 +1,33 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import BaseMiddleware
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from config.settings import config
+from storage.repository import AsyncNewsRepository
+
+LOGGER = logging.getLogger(__name__)
+
+
+class RepositoryMiddleware(BaseMiddleware):
+    """Прокидывает репозиторий в data для хендлеров и фильтров."""
+
+    def __init__(self, repository: AsyncNewsRepository) -> None:
+        self._repository = repository
+
+    async def __call__(self, handler, event: TelegramObject, data: dict):
+        data["repository"] = self._repository
+        return await handler(event, data)
+
+
+class AccessLogMiddleware(BaseMiddleware):
+    """Минимальный лог входящих апдейтов (без PII в meta)."""
+
+    async def __call__(self, handler, event: TelegramObject, data: dict):
+        LOGGER.debug("telegram_update type=%s", type(event).__name__)
+        return await handler(event, data)
 
 
 class RoleMiddleware(BaseMiddleware):
@@ -29,4 +53,8 @@ class RoleMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-__all__ = ["RoleMiddleware"]
+__all__ = [
+    "AccessLogMiddleware",
+    "RepositoryMiddleware",
+    "RoleMiddleware",
+]
