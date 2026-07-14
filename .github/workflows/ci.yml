@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ main, dev, feat/p0-security-cleanup ]
   pull_request:
-    branches: [ main, dev ]
+    branches: [ main, dev, feat/p0-security-cleanup ]
 
 jobs:
   secret-scan-tree:
