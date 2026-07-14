@@ -94,7 +94,26 @@ jobs:
           poetry install || pip install -r requirements.txt
 
       - name: Verify bot_aiogram dependency closure
-        run: python -c "import bot_aiogram"
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          bad = []
+          for path in Path(".").rglob("*.py"):
+              if any(part in {".venv", "venv", ".git", "migrations"} for part in path.parts):
+                  continue
+              src = path.read_text(encoding="utf-8", errors="replace")
+              if src.count("from __future__ import annotations") > 1:
+                  bad.append(str(path))
+              try:
+                  ast.parse(src)
+              except SyntaxError as exc:
+                  raise SystemExit(f"syntax_error:{path}:{exc}") from exc
+          if bad:
+              raise SystemExit("duplicate_future_imports:" + ",".join(bad))
+          print("ast_ok")
+          PY
+          python -c "import bot_aiogram; print('import_ok')"
 
       - name: Lint with ruff
         run: |
