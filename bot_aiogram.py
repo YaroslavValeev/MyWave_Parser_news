@@ -70,7 +70,7 @@ async def main() -> None:
     dispatcher.update.outer_middleware(RepositoryMiddleware(repository))
     dispatcher.message.outer_middleware(AccessLogMiddleware())
     dispatcher.callback_query.outer_middleware(AccessLogMiddleware())
-    dispatcher.include_router(create_router())
+    dispatcher.include_router(create_router(repository, bot))
 
     scheduler_service = SchedulerService(repository, bot)
     await scheduler_service.start()
