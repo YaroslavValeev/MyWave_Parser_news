@@ -14,19 +14,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Gitleaks current working tree
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          # Guard committed + checked-out files (not full history).
-          args: --no-git --config .gitleaks.toml --verbose
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          VER=8.24.3
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan current working tree only
+        run: |
+          gitleaks detect \
+            --no-git \
+            --source . \
+            --config .gitleaks.toml \
+            --verbose \
+            --redact \
+            --exit-code 1
 
   secret-scan-history:
     name: Secret scan (git history report)
     runs-on: ubuntu-latest
-    # History rewrite is Owner GO. Until HISTORY_PURGE_PLAN is executed,
-    # this job may fail; it must NOT be the only scan (see secret-scan-tree).
+    # Full-history findings expected until HISTORY_PURGE_PLAN Owner GO.
     continue-on-error: true
     steps:
       - name: Checkout full history
@@ -34,12 +43,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Gitleaks full git history
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: --config .gitleaks.toml --verbose --report-path gitleaks-history-report.json
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          VER=8.24.3
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan full git history (report)
+        run: |
+          gitleaks detect \
+            --source . \
+            --config .gitleaks.toml \
+            --verbose \
+            --redact \
+            --report-format json \
+            --report-path gitleaks-history-report.json \
+            --exit-code 0 || true
+          # exit-code 0 always: report-only until history purge; tree scan is the hard gate
 
       - name: Upload history scan report
         if: always()
