@@ -20,9 +20,12 @@ frozenlist==1.5.0
 google-auth>=2.3.3
 google-auth-oauthlib==1.2.1
 gspread>=3.7.0
-h11==0.14.0
-httpcore==0.16.3
-httpx==0.24.1
+# httpx>=0.28 нужен для AsyncClient(proxy=) + openai SDK на RU VPS (SOCKS EU).
+# python-telegram-bot 20.x может ругаться на pin; основной бот — aiogram.
+h11>=0.16.0,<1
+httpcore>=1.0.9,<2
+httpx[socks]>=0.28.1,<0.29
+socksio>=1.0.0
 idna==3.10
 lxml==5.3.0
 magic-filter==1.0.12

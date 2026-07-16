@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +15,29 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 else:
     AsyncOpenAI = Any  # type: ignore[assignment]
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _httpx_proxy_client_kwargs(proxy_url: str) -> dict[str, Any]:
+    """Собрать kwargs для httpx.AsyncClient под установленную версию.
+
+    httpx<0.28: ``proxies=``
+    httpx>=0.28: ``proxy=``
+    """
+    import httpx
+
+    url = str(proxy_url).strip()
+    if not url:
+        return {}
+    params = inspect.signature(httpx.AsyncClient.__init__).parameters
+    if "proxy" in params:
+        return {"proxy": url}
+    if "proxies" in params:
+        return {"proxies": url}
+    raise RuntimeError(
+        f"httpx.AsyncClient не принимает proxy/proxies (httpx {httpx.__version__})"
+    )
 
 
 @dataclass(slots=True)
@@ -209,7 +234,30 @@ class OpenAIClient:
                 async_openai_cls = getattr(module, "AsyncOpenAI", None)
                 if async_openai_cls is None:
                     raise RuntimeError("AsyncOpenAI class is unavailable in openai package")
-                self._client = async_openai_cls(api_key=self._settings.api_key)
+                proxy = (
+                    getattr(config, "OPENAI_HTTP_PROXY", None)
+                    or os.getenv("OPENAI_HTTP_PROXY")
+                    or os.getenv("HTTP_OPENAI_PROXY")
+                    or ""
+                ).strip()
+                if proxy:
+                    import httpx
+
+                    http_client = httpx.AsyncClient(
+                        **_httpx_proxy_client_kwargs(proxy),
+                        timeout=httpx.Timeout(120.0, connect=30.0),
+                    )
+                    self._client = async_openai_cls(
+                        api_key=self._settings.api_key,
+                        http_client=http_client,
+                    )
+                    # Не логируем URL (там может быть пароль).
+                    LOGGER.info(
+                        "OpenAI client via HTTP proxy configured (endpoint=%s)",
+                        proxy.split("@")[-1] if "@" in proxy else "(no-host)",
+                    )
+                else:
+                    self._client = async_openai_cls(api_key=self._settings.api_key)
             return self._client
 
 
@@ -241,6 +289,7 @@ def _normalize_text(value: str) -> str:
 __all__ = [
     "OpenAIClient",
     "OpenAISettings",
+    "_httpx_proxy_client_kwargs",
     "configure_openai_client",
     "get_openai_client",
 ]
