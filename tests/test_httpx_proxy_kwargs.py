@@ -24,3 +24,14 @@ def test_httpx_proxy_kwargs_matches_installed_signature():
 def test_httpx_proxy_kwargs_empty_url():
     assert _httpx_proxy_client_kwargs("") == {}
     assert _httpx_proxy_client_kwargs("   ") == {}
+
+
+def test_openai_client_prompts_are_valid_cyrillic():
+    import inspect
+
+    from nlp.openai_client import OpenAIClient
+
+    src = inspect.getsource(OpenAIClient)
+    assert "Сделай краткое новостное резюме" in src
+    assert "Сформулируй" in src
+    assert "РЎРґРµР»Р°Р№" not in src
