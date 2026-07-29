@@ -102,9 +102,14 @@ def guess_source_type(url: str) -> str:
     return "website"
 
 
-async def _fetch_items(source: ManualSource, limit: int | None = None) -> Tuple[list[dict], list[dict]]:
+async def _fetch_items(
+    source: ManualSource,
+    limit: int | None = None,
+    *,
+    download_media: bool = True,
+) -> Tuple[list[dict], list[dict]]:
     if source.type == "telegram":
-        return await _fetch_telegram_items(source, limit)
+        return await _fetch_telegram_items(source, limit, download_media=download_media)
     if source.type == "rss":
         parser = _load_rss_parser()
         return ([_convert_raw_entry(entry, source) for entry in parser(source, [])], [])
@@ -118,7 +123,12 @@ async def _fetch_items(source: ManualSource, limit: int | None = None) -> Tuple[
     raise ValueError(f"Неизвестный тип источника: {source.type}")
 
 
-async def _fetch_telegram_items(source: ManualSource, limit: int | None) -> Tuple[list[dict], list[dict]]:
+async def _fetch_telegram_items(
+    source: ManualSource,
+    limit: int | None,
+    *,
+    download_media: bool = True,
+) -> Tuple[list[dict], list[dict]]:
     from utils.telegram_session import TelegramSessionManager
 
     session_manager = TelegramSessionManager(
@@ -135,7 +145,7 @@ async def _fetch_telegram_items(source: ManualSource, limit: int | None) -> Tupl
     contacts_parser_cls = _load_contacts_parser()
     contacts_parser = contacts_parser_cls(client)
     items: list[dict] = []
-    async for raw in parser.parse(client, source):  # type: ignore[arg-type]
+    async for raw in parser.parse(client, source, download_media=download_media):  # type: ignore[arg-type]
         items.append(_convert_raw_entry(raw, source))
     contacts = await contacts_parser.parse_contacts(source)
     await session_manager.close_client()

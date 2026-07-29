@@ -86,18 +86,44 @@ def extract_usernames(text: str) -> List[str]:
     return re.findall(r'@[A-Za-z0-9_]+', text)
 
 
+def _media_ext_for_message(message: types.Message) -> str:
+    if getattr(message, "photo", None):
+        return ".jpg"
+    if getattr(message, "video", None):
+        return ".mp4"
+    doc = getattr(message, "document", None)
+    mime = str(getattr(doc, "mime_type", "") or "")
+    if mime.startswith("image/"):
+        return "." + (mime.split("/", 1)[-1] or "jpg").split(";")[0]
+    if mime.startswith("video/"):
+        return ".mp4"
+    if isinstance(message.media, types.MessageMediaPhoto):
+        return ".jpg"
+    return ".bin"
+
+
 async def download_media(message: types.Message, download_dir: str = "downloads/") -> bool:
-    """Загружает медиа из сообщения Telegram."""
+    """Загружает медиа. Не создаёт file (1).ext: skip если файл уже есть, иначе overwrite."""
     try:
-        if message.media:
-            file_ext = ""
-            if isinstance(message.media, types.MessageMediaPhoto):
-                file_ext = ".jpg"
-            elif isinstance(message.media, types.MessageMediaVideo):
-                file_ext = ".mp4"
-            # ... добавить другие типы медиа ...
-            await message.download_media(file=f"{download_dir}{message.id}{file_ext}")
+        if not message.media:
+            return False
+        from pathlib import Path
+
+        out_dir = Path(download_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        target = out_dir / f"{message.id}{_media_ext_for_message(message)}"
+        if target.exists() and target.stat().st_size > 0:
+            logger.debug("media skip existing path=%s", target)
             await asyncio.sleep(config.MEDIA_DOWNLOAD_DELAY)
+            return True
+        if target.exists():
+            try:
+                target.unlink()
+            except OSError:
+                pass
+        # Явный путь + предварительный unlink: Telethon иначе делает «file (1).ext».
+        await message.download_media(file=str(target))
+        await asyncio.sleep(config.MEDIA_DOWNLOAD_DELAY)
         return True
     except Exception as e:
         if "cancel" in str(e).lower():

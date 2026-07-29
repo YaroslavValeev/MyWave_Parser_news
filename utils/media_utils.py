@@ -768,12 +768,36 @@ def _dedupe(values: Iterable[str]) -> list[str]:
 
 
 async def download_media(message: Any, download_dir: str = "downloads/") -> tuple[str | None, str | None]:
-    """Compatibility wrapper for older imports."""
+    """Compatibility wrapper for older imports.
+
+    Deterministic path by message.id. Existing non-empty file → skip (no Telethon ``(1)`` clones).
+    """
     try:
         if not getattr(message, "media", None):
             return None, None
-        os.makedirs(download_dir, exist_ok=True)
-        path = await message.download_media(file=download_dir)
+        from pathlib import Path
+
+        out_dir = Path(download_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        msg_id = getattr(message, "id", None) or "media"
+        ext = ".bin"
+        if getattr(message, "photo", None):
+            ext = ".jpg"
+        elif getattr(message, "video", None):
+            ext = ".mp4"
+        elif getattr(message, "document", None):
+            mime = str(getattr(message.document, "mime_type", "") or "")
+            if "/" in mime:
+                ext = "." + mime.split("/", 1)[-1].split(";")[0] or ".bin"
+        target = out_dir / f"{msg_id}{ext}"
+        if target.exists() and target.stat().st_size > 0:
+            return str(target), media_kind_from_path(str(target))
+        if target.exists():
+            try:
+                target.unlink()
+            except OSError:
+                pass
+        path = await message.download_media(file=str(target))
         if not isinstance(path, str) or not path.strip():
             return None, None
         return path.strip(), media_kind_from_path(path)

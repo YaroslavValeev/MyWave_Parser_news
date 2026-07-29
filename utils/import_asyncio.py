@@ -52,31 +52,36 @@ from utils.media_utils import (
 
 # Локальная функция для скачивания медиа из Telegram
 async def download_media(client, message):
-    """Скачивание медиа с повторными попытками"""
+    """Скачивание медиа. Skip/overwrite по message.id — без Telethon «file (1).ext»."""
     if not hasattr(message, 'media') or not message.media:
         return None, None
     try:
-        # Создаем папку media если её нет (используем абсолютный путь для Windows)
-        media_dir = os.path.join(os.getcwd(), "media")
-        os.makedirs(media_dir, exist_ok=True)
-        
-        # Определяем тип медиа
+        from pathlib import Path
+
+        media_dir = Path(os.getcwd()) / "media"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        msg_id = getattr(message, "id", None) or uuid.uuid4().hex
+
         if isinstance(message.media, MessageMediaPhoto):
             media_type = "photo"
-            file = await client.download_media(
-                message.media,
-                file=os.path.join(media_dir, f"{uuid.uuid4()}.jpg")
-            )
+            target = media_dir / f"{msg_id}.jpg"
+            if target.exists() and target.stat().st_size > 0:
+                return str(target), media_type
+            if target.exists():
+                target.unlink(missing_ok=True)
+            file = await client.download_media(message.media, file=str(target))
         elif isinstance(message.media, MessageMediaDocument):
             media_type = "video"
             doc = message.media.document
-            ext = doc.mime_type.split('/')[-1] if doc.mime_type else 'unknown'
-            file = await client.download_media(
-                doc,
-                file=os.path.join(media_dir, f"{uuid.uuid4()}.{ext}")
-            )
+            ext = doc.mime_type.split('/')[-1] if doc.mime_type else 'bin'
+            ext = (ext or "bin").split(";")[0]
+            target = media_dir / f"{msg_id}.{ext}"
+            if target.exists() and target.stat().st_size > 0:
+                return str(target), media_type
+            if target.exists():
+                target.unlink(missing_ok=True)
+            file = await client.download_media(doc, file=str(target))
         else:
-            # Неизвестный тип медиа
             return None, None
         return file, media_type
     except Exception as e:
