@@ -123,7 +123,7 @@ def load_sources():
         NewsSource("telegram", "https://t.me/surfinmoscow", True, None, "Surf in Moscow"),
         NewsSource("telegram", "https://t.me/atcc_russia", True, None, "ATCC Russia"),
         NewsSource("telegram", "https://t.me/surfmosobl", True, None, "Surf Moscow Region"),
-        NewsSource("telegram", "https://t.me/s/wakeflot?after=571", True, None, "Wakeflot"),
+        NewsSource("telegram", "https://t.me/wakeflot", True, None, "Wakeflot"),
     ]
     logger.info("Предустановленные источники загружены.")
 
