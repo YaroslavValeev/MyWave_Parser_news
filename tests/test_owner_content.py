@@ -13,6 +13,17 @@ def test_build_fallback_merged_text_integrates_notes_without_label():
     assert "Скрестили пальцы" in merged
 
 
+def test_build_fallback_keeps_owner_notes_almost_raw():
+    merged = build_fallback_merged_text(
+        source_text="Краткое саммари новости.",
+        author_notes="Мой комментарий!!!\n\nВторая строка.",
+        title="",
+    )
+    assert "Краткое саммари" in merged
+    assert "Мой комментарий!!!" in merged
+    assert "Вторая строка." in merged
+
+
 def test_strip_author_meta_labels():
     text = "Мнение автора\n\nТекст поста."
     cleaned = strip_author_meta_labels(text)

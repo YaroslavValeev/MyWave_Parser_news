@@ -15,8 +15,9 @@ LOGGER = logging.getLogger(__name__)
 
 STATUS_PROCESSING = "processing"
 STATUS_ERROR = "error"
+# NLP никогда не публикует сам: даже «хороший» материал → review (нужен комментарий Owner).
 STATUS_MAP = {
-    PUBLISH: "approved",
+    PUBLISH: "review",
     REVIEW: "review",
     DISCARD: "discarded",
 }

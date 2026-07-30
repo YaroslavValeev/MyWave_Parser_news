@@ -348,8 +348,6 @@ def test_build_caption_uses_merged_text_as_ready_post_without_owner_meta_block()
     }
     nlp = {
         "merged_text": "Собрал для себя главное по этой новости: старт сильный, а для нас это хороший ориентир на сезон.",
-        "author_notes": "Добавить личную оценку",
-        "summary": "Старое саммари",
     }
 
     caption = PublicationService._build_caption(item, nlp)
@@ -357,3 +355,25 @@ def test_build_caption_uses_merged_text_as_ready_post_without_owner_meta_block()
     assert "Собрал для себя главное по этой новости" in caption
     assert "Оригинальный заголовок" not in caption
     assert "<b>Мнение автора</b>" not in caption
+    assert ">сайт</a>" in caption
+    assert ">тг-админ</a>" in caption
+
+
+def test_build_caption_prefers_summary_and_raw_owner_notes():
+    item = {
+        "id": 204,
+        "source": "telegram:chan",
+        "title": "Новость дня",
+        "content": "Длинный оригинал",
+        "link": "https://example.com/post/204",
+    }
+    nlp = {
+        "summary": "Короткое саммари.",
+        "author_notes": "Мой комментарий почти как есть!!!",
+        "merged_text": "Старый rewrite не должен побеждать",
+    }
+    caption = PublicationService._build_caption(item, nlp)
+    assert "Короткое саммари." in caption
+    assert "Мой комментарий почти как есть!!!" in caption
+    assert "Старый rewrite" not in caption
+    assert ">сайт</a>" in caption

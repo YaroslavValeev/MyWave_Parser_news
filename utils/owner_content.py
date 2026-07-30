@@ -31,9 +31,11 @@ def build_fallback_merged_text(
     title: str | None = None,
     max_len: int = 3500,
 ) -> str:
-    """Собрать цельный пост без служебных заголовков, если OpenAI недоступен."""
+    """Собрать пост: саммари/краткий текст + комментарий Owner почти без обработки."""
     body = normalize_publication_text(source_text, preserve_paragraphs=True)
-    notes = normalize_publication_text(strip_author_meta_labels(author_notes), preserve_paragraphs=True)
+    # Комментарий Owner — минимальная нормализация (без LLM и без служебных ярлыков).
+    notes = strip_author_meta_labels(author_notes)
+    notes = re.sub(r"\n{3,}", "\n\n", notes).strip()
     heading = normalize_public_title(title or "", max_len=160)
     parts: list[str] = []
     if heading:
@@ -41,11 +43,8 @@ def build_fallback_merged_text(
     if body:
         parts.append(body)
     if notes:
-        if body:
-            parts.append(notes)
-        else:
-            parts.append(notes)
-    merged = normalize_publication_text("\n\n".join(parts), preserve_paragraphs=True)
+        parts.append(notes)
+    merged = "\n\n".join(parts).strip()
     if not merged:
         return notes or body
     return to_card_preview_text(merged, max_len=max_len) if max_len else merged
@@ -140,7 +139,7 @@ async def ensure_merged_owner_post(
     *,
     force: bool = False,
 ) -> str:
-    """Гарантировать merged_text: OpenAI rewrite или локальный fallback без «Мнение автора»."""
+    """Собрать merged_text: по умолчанию саммари + почти сырой комментарий Owner."""
     merged = str(nlp.get("merged_text") or "").strip()
     if merged and not force:
         return merged
@@ -149,14 +148,20 @@ async def ensure_merged_owner_post(
     if not notes:
         return merged
 
-    source_text = owner_editing_text(item, nlp) or str(nlp.get("summary") or "").strip()
+    summary = str(nlp.get("summary") or "").strip()
+    # Канон Owner: из оригинала оставляем саммари, не полный raw_content.
+    source_text = summary or owner_editing_text(item, nlp)
     if not source_text:
         return merged
 
     title = derive_item_title(item, max_len=160)
-    summary = str(nlp.get("summary") or "").strip()
 
-    if config.OPENAI_API_KEY and not __import__("os").getenv("PYTEST_CURRENT_TEST"):
+    use_llm = bool(getattr(config, "OWNER_POST_USE_LLM_REWRITE", False))
+    if (
+        use_llm
+        and config.OPENAI_API_KEY
+        and not __import__("os").getenv("PYTEST_CURRENT_TEST")
+    ):
         from nlp.openai_client import get_openai_client
 
         try:
@@ -164,7 +169,6 @@ async def ensure_merged_owner_post(
             rewritten = await client.author_rewrite(
                 source_text,
                 notes,
-                base_summary=summary or None,
                 lang=config.NL_LANG,
             )
             rewritten = strip_author_meta_labels(rewritten)

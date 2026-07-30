@@ -69,6 +69,17 @@ class Config:
     CHANNEL_ID = (os.getenv("CHANNEL_ID") or os.getenv("TELEGRAM_CHANNEL_ID") or "").strip() or None
     EDITORS_CHAT_ID = (os.getenv("EDITORS_CHAT_ID") or "").strip() or None
     OWNER_USER_ID = os.getenv("OWNER_USER_ID")
+    # Ссылка на отзывы MyWave (Яндекс.Карты); пусто — блок не показывается
+    YANDEX_REVIEW_URL = (os.getenv("YANDEX_REVIEW_URL") or "").strip() or None
+    # Футер публикации в канал: «сайт» / «тг-админ»
+    PUBLICATION_SITE_URL = (
+        os.getenv("PUBLICATION_SITE_URL") or os.getenv("SITE_BASE_URL") or "https://mywavewake.ru/"
+    ).strip()
+    PUBLICATION_ADMIN_BOT_URL = (
+        os.getenv("PUBLICATION_ADMIN_BOT_URL") or "https://t.me/MyWave_Admin_bot"
+    ).strip()
+    # true = OpenAI переписывает комментарий Owner; false = саммари + почти сырой комментарий
+    OWNER_POST_USE_LLM_REWRITE = os.getenv("OWNER_POST_USE_LLM_REWRITE", "false").lower() == "true"
 
     # Интеграции Google/YouTube
     GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE")
