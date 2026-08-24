@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Prod smoke without printing secrets. Exit 0 = process can import and DB is readable."""
+"""Prod smoke without printing secrets.
+
+Exit 0 = process can import and DB is readable.
+Content pipeline status is reported separately (Stage 1): process-alive ≠ Content Engine.
+"""
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
 import sys
@@ -14,12 +19,9 @@ if str(ROOT) not in sys.path:
 os.chdir(ROOT)
 
 
-def _present(name: str) -> bool:
-    return bool((os.getenv(name) or "").strip())
-
-
 def main() -> int:
     from config.settings import config
+    from services.source_telemetry import evaluate_source_pipeline
     from utils.collect_report import load_collect_report
 
     errors: list[str] = []
@@ -51,6 +53,30 @@ def main() -> int:
         failed = int(report.get("sources_failed") or 0)
         collect_note = f"collect_ok={max(0, total - failed)}/{total}"
 
+    content_note = "content_pipeline=unknown"
+    try:
+        from storage.repository import AsyncNewsRepository, initialize_database
+
+        async def _load_health() -> list:
+            if not db_path.is_file():
+                return []
+            await initialize_database(db_path)
+            repo = AsyncNewsRepository(db_path)
+            return await repo.list_source_health(limit=500)
+
+        rows = asyncio.run(_load_health())
+        stale_h = float(getattr(config, "SOURCE_HEALTH_STALE_HOURS", 36) or 36)
+        streak = int(getattr(config, "SOURCE_HEALTH_FAIL_STREAK", 3) or 3)
+        verdict = evaluate_source_pipeline(rows, stale_hours=stale_h, fail_streak=streak)
+        content_note = (
+            f"content_pipeline={'ok' if verdict['content_pipeline_ok'] else 'degraded'}"
+            f" tracked={verdict['sources_tracked']}"
+            f" ok_recent={verdict['sources_ok_recent']}"
+            f" fail_streak={len(verdict['fail_streak_sources'])}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        content_note = f"content_pipeline=error:{type(exc).__name__}"
+
     openai_set = bool(str(getattr(config, "OPENAI_API_KEY", "") or os.getenv("OPENAI_API_KEY") or "").strip())
     sheet_set = bool(str(getattr(config, "GOOGLE_SHEET_ID", "") or "").strip())
     print(
@@ -60,9 +86,11 @@ def main() -> int:
         + f" openai={'set' if openai_set else 'missing'}"
         + f" sheets={'set' if sheet_set else 'missing'}"
         + f" {collect_note}"
+        + f" {content_note}"
     )
     for item in errors:
         print(f"error:{item}")
+    # Process health fails hard; content degradation is informational (exit still 0 if process ok).
     return 1 if errors else 0
 
 

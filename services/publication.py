@@ -170,6 +170,19 @@ class PublicationService:
             if not self._has_author_notes(nlp):
                 await self._handle_missing_author_notes(item_id, str(item.get("status") or ""))
                 continue
+            from services.editorial_layers import extract_editorial_layers, publication_allowed
+
+            layers = extract_editorial_layers(item, nlp)
+            allowed, deny_reason = publication_allowed(layers)
+            if not allowed:
+                await self._handle_missing_author_notes(item_id, str(item.get("status") or ""))
+                await self._repository.log_event(
+                    item_id,
+                    "warning",
+                    "editorial_policy_block",
+                    {"reason": deny_reason},
+                )
+                continue
             if is_title_only_summary_fallback(item, nlp):
                 await self._handle_untrusted_summary(item_id, str(item.get("status") or ""))
                 continue

@@ -134,6 +134,8 @@ def _metadata_for_item(
             item.get("original_published_at") or item.get("date") or item.get("published_at") or ""
         ).strip(),
         "slug_hint": str(item.get("slug") or item.get("source_item_id") or item_id).strip(),
+        "provenance": "parser_news",
+        "source_item_id": str(item.get("source_item_id") or "").strip(),
     }
 
 
@@ -192,6 +194,12 @@ class SiteMediaClient:
         token = str(getattr(config, "MEDIA_UPLOAD_TOKEN", "") or "").strip()
         if not upload_url or not token:
             return MediaUploadResult(ok=False, error="media_upload_not_configured")
+        try:
+            from utils.safe_http import assert_public_http_url
+
+            assert_public_http_url(upload_url, allow_http=False, resolve_dns=False)
+        except Exception as exc:  # noqa: BLE001 — UnsafeURLError or import
+            return MediaUploadResult(ok=False, error=f"unsafe_upload_url:{exc}")
         if not path.is_file():
             return MediaUploadResult(ok=False, error="media_file_not_found")
 
@@ -283,6 +291,21 @@ class SiteMediaClient:
                     return MediaUploadResult(
                         ok=False,
                         error="response_url_missing_or_invalid",
+                        status_code=last_status,
+                        checksum=checksum,
+                        mime_type=mime_type,
+                        bytes=size,
+                        response=last_payload,
+                    )
+                try:
+                    from utils.safe_http import assert_public_http_url
+
+                    if public_url.startswith(("http://", "https://")):
+                        assert_public_http_url(public_url, allow_http=True, resolve_dns=False)
+                except Exception as exc:  # noqa: BLE001
+                    return MediaUploadResult(
+                        ok=False,
+                        error=f"unsafe_response_url:{exc}",
                         status_code=last_status,
                         checksum=checksum,
                         mime_type=mime_type,

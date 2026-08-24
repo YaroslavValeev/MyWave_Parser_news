@@ -183,6 +183,7 @@ class SchedulerService:
             )
             if report.sources_failed:
                 await self._notify_collect_failures(report)
+            await self._notify_source_health_alerts()
         except ParseAllSourcesBusyError:
             LOGGER.info(
                 "collect_sources skipped: parse_all_sources already running (manual /parse or overlap)"
@@ -288,6 +289,36 @@ class SchedulerService:
             await self._bot.send_message(chat_id, text, parse_mode="HTML")
         except Exception:  # noqa: BLE001
             LOGGER.exception("collect failure alert failed to send")
+
+    async def _notify_source_health_alerts(self) -> None:
+        """Alert when sources hit fail-streak / content pipeline degraded (Stage 1)."""
+        chat_id = self._resolve_editors_chat_id()
+        if chat_id is None:
+            return
+        try:
+            from services.source_telemetry import evaluate_source_pipeline
+
+            rows = await self._repository.list_source_health(limit=500)
+            stale_h = float(getattr(config, "SOURCE_HEALTH_STALE_HOURS", 36) or 36)
+            streak = int(getattr(config, "SOURCE_HEALTH_FAIL_STREAK", 3) or 3)
+            verdict = evaluate_source_pipeline(
+                rows, stale_hours=stale_h, fail_streak=streak
+            )
+            if verdict["content_pipeline_ok"]:
+                return
+            fail_names = ", ".join(verdict["fail_streak_sources"]) or "—"
+            stale_names = ", ".join(verdict["stale_sources"]) or "—"
+            text = (
+                "<b>Content pipeline: degraded</b>\n"
+                f"Tracked: {verdict['sources_tracked']}, "
+                f"ok recent: {verdict['sources_ok_recent']}\n"
+                f"Fail streak ≥{streak}: {fail_names}\n"
+                f"Stale/failing: {stale_names}\n"
+                "<i>process-alive ≠ Content Engine</i>"
+            )
+            await self._bot.send_message(chat_id, text, parse_mode="HTML")
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("source health alert failed to send")
 
     def _resolve_editors_chat_id(self) -> Optional[int | str]:
         if not config.EDITORS_CHAT_ID:

@@ -278,3 +278,15 @@ async def test_maybe_autoupload_logs_on_upload_failure(monkeypatch):
     res = await maybe_autoupload_local_cover_and_sync_sheet(repo, 3)
     assert res is not None and res.ok is False
     assert ("warning", "owner_cover_auto_upload_failed") in repo.events
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_private_upload_endpoint(monkeypatch, tmp_path):
+    _configure_upload(monkeypatch)
+    monkeypatch.setattr(config, "MEDIA_UPLOAD_URL", "http://127.0.0.1/api/blog/media/upload")
+    image = tmp_path / "cover.jpg"
+    image.write_bytes(b"\xff\xd8\xff\xe0" + b"fake-jpeg-body")
+
+    result = await upload_cover_image(image, item_id=9, item={})
+    assert result.ok is False
+    assert "unsafe_upload_url" in result.error

@@ -1233,6 +1233,7 @@ def format_stats(
     metrics: Mapping[str, Any] | None,
     *,
     channel_commenters: int | None = None,
+    source_health: list[Mapping[str, Any]] | None = None,
 ) -> str:
     """Краткая сводка: счётчики по статусам и очередь NLP (/stats, кнопка «Статус»)."""
     metrics = metrics or {}
@@ -1249,6 +1250,19 @@ def format_stats(
     if channel_commenters is not None:
         lines.extend(["", "<b>Комментаторы канала</b>", f"В базе: {channel_commenters}"])
     lines.append(format_collect_report_html(load_collect_report()))
+    try:
+        from config.settings import config
+        from services.source_telemetry import format_source_health_html
+
+        lines.append(
+            format_source_health_html(
+                source_health,
+                stale_hours=float(getattr(config, "SOURCE_HEALTH_STALE_HOURS", 36) or 36),
+                fail_streak=int(getattr(config, "SOURCE_HEALTH_FAIL_STREAK", 3) or 3),
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return "\n".join(lines)
 
 
@@ -1258,6 +1272,7 @@ def format_report(
     *,
     publication_pending: int,
     channel_configured: bool,
+    source_health: list[Mapping[str, Any]] | None = None,
 ) -> str:
     """Развёрнутый отчёт для /report: сводка + публикация + подсказки."""
     metrics = metrics or {}
@@ -1313,6 +1328,20 @@ def format_report(
         ]
     )
     lines.append(format_collect_report_html(load_collect_report()))
+    try:
+        from config.settings import config
+        from services.source_telemetry import format_source_health_html
+
+        lines.append(
+            format_source_health_html(
+                source_health,
+                stale_hours=float(getattr(config, "SOURCE_HEALTH_STALE_HOURS", 36) or 36),
+                fail_streak=int(getattr(config, "SOURCE_HEALTH_FAIL_STREAK", 3) or 3),
+                limit=12,
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return "\n".join(lines)
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -25,6 +26,20 @@ _INITIALIZED = False
 _INIT_LOCK = asyncio.Lock()
 
 
+@dataclass(slots=True, frozen=True)
+class SaveNewsStats:
+    """Результат persist: новые / дубли / ошибки записи."""
+
+    saved: int
+    duplicates: int
+    errors: int
+    collected: int
+
+    @property
+    def parsed(self) -> int:
+        return self.collected
+
+
 async def _ensure_initialized() -> None:
     global _INITIALIZED
     if _INITIALIZED:
@@ -35,12 +50,15 @@ async def _ensure_initialized() -> None:
             _INITIALIZED = True
 
 
-async def save_news(news_items: Iterable[dict]) -> int:
-    """Persist fetched news items and return number of inserted records."""
+async def save_news_detailed(news_items: Iterable[dict]) -> SaveNewsStats:
+    """Persist fetched news items; вернуть saved / duplicates / errors."""
     await _ensure_initialized()
+    items = list(news_items)
     saved = 0
+    duplicates = 0
+    errors = 0
     inserted_for_sync: list[tuple[int, dict]] = []
-    for item in news_items:
+    for item in items:
         payload = {
             "source": item.get("source", "unknown"),
             "title": item.get("title"),
@@ -58,7 +76,11 @@ async def save_news(news_items: Iterable[dict]) -> int:
             saved += 1
             inserted_for_sync.append((item_id, {**item, **payload, "id": item_id, "status": "new"}))
         except DuplicateItemError:
+            duplicates += 1
             LOGGER.debug("Skip duplicate item with link %s", item.get("link"))
+        except Exception:  # noqa: BLE001
+            errors += 1
+            LOGGER.exception("Failed to persist news item link=%s", item.get("link"))
     if inserted_for_sync:
         synced = await sync_ingest_items_batch(inserted_for_sync)
         if synced < len(inserted_for_sync):
@@ -70,7 +92,18 @@ async def save_news(news_items: Iterable[dict]) -> int:
             LOGGER.exception("Auto competitions extraction failed")
     if saved:
         LOGGER.info("Persisted %s new news items", saved)
-    return saved
+    return SaveNewsStats(
+        saved=saved,
+        duplicates=duplicates,
+        errors=errors,
+        collected=len(items),
+    )
+
+
+async def save_news(news_items: Iterable[dict]) -> int:
+    """Persist fetched news items and return number of inserted records."""
+    stats = await save_news_detailed(news_items)
+    return stats.saved
 
 
 async def save_contacts(contacts: Iterable[dict]) -> int:
@@ -191,7 +224,9 @@ def _join_media(value: object) -> str | None:
 
 
 __all__ = [
+    "SaveNewsStats",
     "save_news",
+    "save_news_detailed",
     "save_contacts",
     "save_channel_commenters",
     "count_channel_commenters",

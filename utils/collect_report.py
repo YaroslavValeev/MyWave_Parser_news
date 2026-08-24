@@ -43,6 +43,12 @@ def save_collect_report(
                 "url": str(row.get("url") or "")[:500],
                 "ok": bool(row.get("ok")),
                 "news_saved": int(row.get("news_saved") or 0),
+                "collected": int(row.get("collected") or 0),
+                "parsed": int(row.get("parsed") or 0),
+                "duplicates": int(row.get("duplicates") or 0),
+                "rejected": int(row.get("rejected") or 0),
+                "errors": int(row.get("errors") or 0),
+                "latency_ms": float(row.get("latency_ms") or 0.0),
                 "error": str(row.get("error") or "")[:300],
             }
             for row in results
@@ -86,11 +92,38 @@ def format_collect_report_html(report: Mapping[str, Any] | None) -> str:
         f"\nНовых в БД: {int(report.get('news_saved') or 0)}",
         f"\nДлительность: {report.get('elapsed_seconds') or 0} с",
     ]
-    bad = [row for row in (report.get("results") or []) if isinstance(row, dict) and not row.get("ok")]
+    rows = [row for row in (report.get("results") or []) if isinstance(row, dict)]
+    bad = [row for row in rows if not row.get("ok")]
     if bad:
-        lines.append("\nОшибки:")
-        for row in bad[:12]:
-            name = str(row.get("name") or row.get("url") or "?")[:80]
-            err = str(row.get("error") or "fail")[:80]
-            lines.append(f"\n• {name}: {err}")
+        lines.append("\n<b>Ошибки:</b>")
+        for row in bad[:8]:
+            lines.append(
+                f"\n• {row.get('name') or row.get('url')}: "
+                f"{(row.get('error') or 'error')[:120]}"
+            )
+    # Краткая телеметрия по тику (Stage 1)
+    with_metrics = [
+        row
+        for row in rows
+        if int(row.get("collected") or 0)
+        or int(row.get("duplicates") or 0)
+        or float(row.get("latency_ms") or 0)
+    ]
+    if with_metrics:
+        lines.append("\n<b>Telemetry (тик):</b>")
+        for row in with_metrics[:6]:
+            lines.append(
+                f"\n• {row.get('name') or '?'}: "
+                f"col={int(row.get('collected') or 0)} "
+                f"dup={int(row.get('duplicates') or 0)} "
+                f"{float(row.get('latency_ms') or 0):.0f}ms"
+            )
     return "".join(lines)
+
+
+__all__ = [
+    "collect_report_path",
+    "format_collect_report_html",
+    "load_collect_report",
+    "save_collect_report",
+]

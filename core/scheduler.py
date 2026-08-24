@@ -9,7 +9,8 @@ from pathlib import Path
 
 from config.settings import config
 from services.manual_collect import ManualSource, _fetch_items
-from storage.data import save_contacts, save_news
+from services.source_telemetry import SourceTickMetrics
+from storage.data import get_repository, save_contacts, save_news_detailed
 from storage.sources import list_sources
 from utils.collect_report import save_collect_report
 
@@ -100,6 +101,29 @@ async def parse_all_sources(*, wait_if_busy: bool = False) -> ParseAllSummary:
         return await _parse_all_sources_impl()
 
 
+async def _record_source_tick(tick: SourceTickMetrics) -> None:
+    try:
+        repo = await get_repository()
+        await repo.upsert_source_health(
+            {
+                "source_key": tick.key,
+                "source_type": tick.source_type,
+                "source_name": tick.source_name,
+                "source_url": tick.source_url,
+                "ok": tick.ok,
+                "latency_ms": tick.latency_ms,
+                "collected": tick.collected,
+                "parsed": tick.parsed,
+                "duplicates": tick.duplicates,
+                "rejected": tick.rejected,
+                "errors": tick.errors,
+                "error": tick.error,
+            }
+        )
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("source_health upsert failed for %s", tick.source_url)
+
+
 async def _parse_all_sources_impl() -> ParseAllSummary:
     total_news_saved = 0
     total_contacts_saved = 0
@@ -116,6 +140,7 @@ async def _parse_all_sources_impl() -> ParseAllSummary:
             url=source.url,
             name=source.name or source.url,
         )
+        tick_t0 = time.perf_counter()
         try:
             items, contacts = await _fetch_items(
                 manual_source,
@@ -123,24 +148,29 @@ async def _parse_all_sources_impl() -> ParseAllSummary:
                 download_media=False if manual_source.type == "telegram" and skip_media else True,
             )
         except Exception as exc:  # noqa: BLE001
+            latency_ms = (time.perf_counter() - tick_t0) * 1000.0
             sources_failed += 1
             LOGGER.exception("Failed to collect source %s", source.url)
-            source_results.append(
-                {
-                    "type": manual_source.type,
-                    "name": manual_source.name,
-                    "url": source.url,
-                    "ok": False,
-                    "news_saved": 0,
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
+            tick = SourceTickMetrics(
+                source_type=manual_source.type,
+                source_name=manual_source.name,
+                source_url=source.url,
+                ok=False,
+                latency_ms=latency_ms,
+                errors=1,
+                error=f"{type(exc).__name__}: {exc}",
             )
+            await _record_source_tick(tick)
+            source_results.append(tick.to_result_row())
             continue
 
-        saved = 0
+        collected = len(items)
+        stats = await save_news_detailed(items) if items else None
+        saved = stats.saved if stats else 0
+        duplicates = stats.duplicates if stats else 0
+        write_errors = stats.errors if stats else 0
+        total_news_saved += saved
         if items:
-            saved = await save_news(items)
-            total_news_saved += saved
             LOGGER.debug(
                 "Saved %s news items from %s (%s)",
                 saved,
@@ -153,16 +183,27 @@ async def _parse_all_sources_impl() -> ParseAllSummary:
             LOGGER.debug(
                 "Saved %s contacts from %s", stored_contacts, manual_source.url
             )
-        source_results.append(
-            {
-                "type": manual_source.type,
-                "name": manual_source.name,
-                "url": source.url,
-                "ok": True,
-                "news_saved": saved,
-                "error": "",
-            }
+        latency_ms = (time.perf_counter() - tick_t0) * 1000.0
+        # Fetch ok; persist errors count as rejected/errors without failing the source tick.
+        tick_ok = write_errors == 0
+        if not tick_ok:
+            sources_failed += 1
+        tick = SourceTickMetrics(
+            source_type=manual_source.type,
+            source_name=manual_source.name,
+            source_url=source.url,
+            ok=tick_ok,
+            latency_ms=latency_ms,
+            collected=collected,
+            parsed=collected,
+            saved=saved,
+            duplicates=duplicates,
+            rejected=0,
+            errors=write_errors,
+            error="" if tick_ok else f"persist_errors={write_errors}",
         )
+        await _record_source_tick(tick)
+        source_results.append(tick.to_result_row())
 
     if getattr(config, "ENGAGEMENT_COLLECT_ENABLED", False):
         try:

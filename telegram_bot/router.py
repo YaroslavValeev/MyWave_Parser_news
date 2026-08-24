@@ -802,7 +802,13 @@ def create_router(repository: AsyncNewsRepository, bot: Bot) -> Router:
             counts = await repo.get_status_counts()
             metrics = await repo.get_processing_summary()
             commenters_n = await count_channel_commenters()
-            text = format_stats(counts, metrics, channel_commenters=commenters_n)
+            health_rows = await repo.list_source_health(limit=20)
+            text = format_stats(
+                counts,
+                metrics,
+                channel_commenters=commenters_n,
+                source_health=health_rows,
+            )
             await message.answer(text, parse_mode="HTML")
         except aiosqlite.Error:
             LOGGER.exception("stats failed from bot")
@@ -892,11 +898,13 @@ def create_router(repository: AsyncNewsRepository, bot: Bot) -> Router:
             metrics = await repo.get_processing_summary()
             pub_n = await repo.count_publication_queue()
             ch_ok = bool(config.CHANNEL_ID)
+            health_rows = await repo.list_source_health(limit=30)
             text = format_report(
                 counts,
                 metrics,
                 publication_pending=pub_n,
                 channel_configured=ch_ok,
+                source_health=health_rows,
             )
             await message.answer(text, parse_mode="HTML")
         except aiosqlite.Error:

@@ -850,6 +850,124 @@ class AsyncNewsRepository:
             await db.commit()
         return len(ids)
 
+    async def upsert_source_health(self, tick: Mapping[str, Any]) -> None:
+        """Записать метрики одного тика сбора по источнику (Stage 1 telemetry)."""
+        key = str(tick.get("source_key") or "").strip()
+        if not key:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        ok = bool(tick.get("ok"))
+        collected = int(tick.get("collected") or 0)
+        parsed = int(tick.get("parsed") or 0)
+        duplicates = int(tick.get("duplicates") or 0)
+        rejected = int(tick.get("rejected") or 0)
+        errors = int(tick.get("errors") or 0)
+        latency = float(tick.get("latency_ms") or 0.0)
+        err_text = str(tick.get("error") or "")[:500]
+        async with self._connection() as db:
+            cur = await db.execute(
+                "SELECT consecutive_failures FROM source_health WHERE source_key = ?",
+                (key,),
+            )
+            prev = await cur.fetchone()
+            prev_streak = int(prev["consecutive_failures"]) if prev else 0
+            streak = 0 if ok else prev_streak + 1
+            await db.execute(
+                """
+                INSERT INTO source_health (
+                    source_key, source_type, source_name, source_url,
+                    last_success_at, last_failure_at, last_error, last_latency_ms,
+                    consecutive_failures,
+                    collected_total, parsed_total, duplicates_total, rejected_total, errors_total,
+                    last_collected, last_parsed, last_duplicates, last_rejected, last_errors,
+                    last_ok, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?
+                )
+                ON CONFLICT(source_key) DO UPDATE SET
+                    source_type = excluded.source_type,
+                    source_name = excluded.source_name,
+                    source_url = excluded.source_url,
+                    last_success_at = CASE
+                        WHEN excluded.last_ok = 1 THEN excluded.last_success_at
+                        ELSE source_health.last_success_at
+                    END,
+                    last_failure_at = CASE
+                        WHEN excluded.last_ok = 0 THEN excluded.last_failure_at
+                        ELSE source_health.last_failure_at
+                    END,
+                    last_error = excluded.last_error,
+                    last_latency_ms = excluded.last_latency_ms,
+                    consecutive_failures = excluded.consecutive_failures,
+                    collected_total = source_health.collected_total + excluded.last_collected,
+                    parsed_total = source_health.parsed_total + excluded.last_parsed,
+                    duplicates_total = source_health.duplicates_total + excluded.last_duplicates,
+                    rejected_total = source_health.rejected_total + excluded.last_rejected,
+                    errors_total = source_health.errors_total + excluded.last_errors,
+                    last_collected = excluded.last_collected,
+                    last_parsed = excluded.last_parsed,
+                    last_duplicates = excluded.last_duplicates,
+                    last_rejected = excluded.last_rejected,
+                    last_errors = excluded.last_errors,
+                    last_ok = excluded.last_ok,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    key,
+                    str(tick.get("source_type") or "unknown"),
+                    str(tick.get("source_name") or "")[:200],
+                    str(tick.get("source_url") or "")[:500],
+                    now if ok else None,
+                    None if ok else now,
+                    "" if ok else err_text,
+                    latency,
+                    streak,
+                    collected,
+                    parsed,
+                    duplicates,
+                    rejected,
+                    errors,
+                    collected,
+                    parsed,
+                    duplicates,
+                    rejected,
+                    errors,
+                    1 if ok else 0,
+                    now,
+                ),
+            )
+            await db.commit()
+
+    async def list_source_health(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        async with self._connection() as db:
+            cur = await db.execute(
+                """
+                SELECT * FROM source_health
+                ORDER BY datetime(updated_at) DESC
+                LIMIT ?
+                """,
+                (max(1, limit),),
+            )
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_source_health(self, source_key: str) -> dict[str, Any] | None:
+        key = (source_key or "").strip()
+        if not key:
+            return None
+        async with self._connection() as db:
+            cur = await db.execute(
+                "SELECT * FROM source_health WHERE source_key = ?",
+                (key,),
+            )
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
 
 __all__ = [
     "AsyncNewsRepository",

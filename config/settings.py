@@ -188,6 +188,9 @@ class Config:
     NLP_INTERVAL_MINUTES = int(os.getenv("NLP_INTERVAL_MINUTES", "2"))
     # 0 = каждый тик обходятся все источники; N>0 — за тик только N источников (round-robin).
     COLLECT_SOURCES_CHUNK_SIZE = int(os.getenv("COLLECT_SOURCES_CHUNK_SIZE", "0"))
+    # Content Engine Stage 1: пороги health/alerts по источникам
+    SOURCE_HEALTH_STALE_HOURS = float(os.getenv("SOURCE_HEALTH_STALE_HOURS", "36"))
+    SOURCE_HEALTH_FAIL_STREAK = int(os.getenv("SOURCE_HEALTH_FAIL_STREAK", "3"))
     # Лимит команды /requeue_nlp (владелец): анти-спам OpenAI
     REQUEUE_NLP_COOLDOWN_SECONDS = int(os.getenv("REQUEUE_NLP_COOLDOWN_SECONDS", "60"))
     REQUEUE_NLP_MAX_PER_HOUR = int(os.getenv("REQUEUE_NLP_MAX_PER_HOUR", "20"))

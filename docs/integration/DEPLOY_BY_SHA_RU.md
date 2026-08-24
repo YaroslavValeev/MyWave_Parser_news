@@ -45,7 +45,7 @@ hostname -I
 systemctl is-active parser-news-bot
 git remote -v
 git fetch origin
-export RELEASE_SHA=$(git rev-parse origin/feat/blog-media-editorial-pipeline)
+export RELEASE_SHA=$(git rev-parse origin/feat/blog-editorial-media-pipeline)
 export ROLLBACK_SHA=a2c5d439212cf22d22771435fabe334017999002
 echo "RELEASE_SHA=$RELEASE_SHA"
 echo "ROLLBACK_SHA=$ROLLBACK_SHA"
@@ -64,7 +64,7 @@ test -f credentials.json && echo gcp_present || echo gcp_MISSING
 ```bash
 cd /opt/bot3/parser-new-bot
 git fetch origin
-export RELEASE_SHA=$(git rev-parse origin/feat/blog-media-editorial-pipeline)
+export RELEASE_SHA=$(git rev-parse origin/feat/blog-editorial-media-pipeline)
 export ROLLBACK_SHA=a2c5d439212cf22d22771435fabe334017999002
 
 sudo systemctl stop parser-news-bot
@@ -76,7 +76,8 @@ source venv/bin/activate
 pip install -r requirements.txt
 pytest tests/test_editorial_contract.py tests/test_video_providers.py tests/test_safe_http.py \
   tests/test_media_contract.py tests/test_media_upload.py tests/test_card_preview_text.py \
-  tests/test_raw_feed_publish_contract.py tests/test_owner_review_telegram.py -q --tb=no || {
+  tests/test_raw_feed_publish_contract.py tests/test_owner_review_telegram.py \
+  tests/test_source_telemetry.py tests/test_content_engine_contracts.py tests/test_collect_report.py -q --tb=no || {
   echo "tests_failed_rollback";
   git checkout --force "$ROLLBACK_SHA";
   sudo systemctl start parser-news-bot;
@@ -86,9 +87,10 @@ pytest tests/test_editorial_contract.py tests/test_video_providers.py tests/test
 sudo systemctl start parser-news-bot
 sudo systemctl status parser-news-bot --no-pager
 python scripts/check_bot_health.py
+python scripts/content_engine_gate.py
 ```
 
-**Expected:** `active (running)`, health exit 0, `HEAD` == `$RELEASE_SHA`.
+**Expected:** `active (running)`, health exit 0, Stage1 READY, `HEAD` == `$RELEASE_SHA`.
 
 ---
 
@@ -98,9 +100,13 @@ python scripts/check_bot_health.py
 cd /opt/bot3/parser-new-bot
 source venv/bin/activate
 python scripts/check_bot_health.py
+python scripts/content_engine_gate.py
 python scripts/blog_media_backfill_dry_run.py --source json --out /tmp/backfill-dry-run/
 grep -E 'proposed_writes|rows=' /tmp/backfill-dry-run/BACKFILL_DRY_RUN_*.md
 # Expected: proposed_writes: 0
+
+# После одного collect (бот /parse или дождаться расписания):
+python scripts/content_e2e_trace.py --latest
 ```
 
 Telegram Admin (manual): один материал → Retry media → Approve.  

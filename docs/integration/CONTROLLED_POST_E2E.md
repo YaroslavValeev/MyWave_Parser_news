@@ -10,6 +10,8 @@
 - [ ] `.env` / `credentials.json` не в git (`git ls-files` пусто)
 - [ ] CI green: `secret-scan-tree` + pytest (history scan may warn until purge)
 - [ ] Dry-run report: `proposed_writes=0`
+- [ ] Local gate: `python scripts/content_engine_gate.py` → Stage1 READY
+- [ ] Trace material: `python scripts/content_e2e_trace.py --latest` (owner_comment PASS before publish)
 
 ## One controlled post
 
