@@ -547,11 +547,16 @@ class PublicationService:
             if body:
                 parts.append(html.escape(body))
 
+        source_url = str(item.get("link") or item.get("source_url") or "").strip()
         site_url = str(getattr(config, "PUBLICATION_SITE_URL", "") or "https://mywavewake.ru/").strip()
         admin_url = str(
             getattr(config, "PUBLICATION_ADMIN_BOT_URL", "") or "https://t.me/MyWave_Admin_bot"
         ).strip()
         footer_bits: list[str] = []
+        if source_url.lower().startswith(("http://", "https://")):
+            footer_bits.append(
+                f'<a href="{html.escape(source_url, quote=True)}">Источник</a>'
+            )
         if site_url:
             footer_bits.append(f'<a href="{html.escape(site_url, quote=True)}">сайт</a>')
         if admin_url:

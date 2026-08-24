@@ -517,7 +517,7 @@ def build_review_card_html(
     item: Mapping[str, Any],
     nlp: Mapping[str, Any] | None,
     *,
-    link_as_anchor: bool = False,
+    link_as_anchor: bool = True,
     banner: str | None = None,
     content_excerpt_max: int = 3200,
     summary_max: int = 1800,
@@ -578,7 +578,13 @@ def build_review_card_html(
         parts.append(f"\nvideo_url: {html.escape(video.video_url or '—')}")
         parts.append(f"\nembed_url: {html.escape(video.embed_url or '—')}")
         parts.append(f"\nposter: {html.escape(video.poster_url or '—')}")
-        parts.append(f"\nsource: {html.escape(source_name or '—')} · {html.escape(link or '—')}")
+        if link.lower().startswith(("http://", "https://")):
+            source_label = source_name or "Источник"
+            parts.append(
+                f'\nsource: <a href="{html.escape(link, quote=True)}">{html.escape(source_label)}</a>'
+            )
+        else:
+            parts.append(f"\nsource: {html.escape(source_name or '—')} · {html.escape(link or '—')}")
         media_line = f"\nmedia_status: <code>{html.escape(media_diag.media_status)}</code>"
         if media_diag.media_error:
             media_line += f" · error: <code>{html.escape(media_diag.media_error)}</code>"
@@ -663,7 +669,7 @@ def build_review_card_html(
 
         if link:
             if link_as_anchor:
-                parts.append(f'\n\n<a href="{html.escape(link)}">Источник</a>')
+                parts.append(f'\n\n<a href="{html.escape(link, quote=True)}">Источник</a>')
             else:
                 parts.append(f"\n\nИсточник:\n{html.escape(link)}")
 
@@ -686,7 +692,7 @@ def build_review_card_html(
             parts_short.append(f"\n\n<i>Мнение / комментарий:</i>\n{html.escape(_truncate_plain(notes, 400))}")
         if link:
             if link_as_anchor:
-                parts_short.append(f'\n\n<a href="{html.escape(link)}">Источник</a>')
+                parts_short.append(f'\n\n<a href="{html.escape(link, quote=True)}">Источник</a>')
             else:
                 parts_short.append(f"\n\nИсточник:\n{html.escape(link)}")
         text = "".join(parts_short)
@@ -930,7 +936,7 @@ async def show_review_item_card(
     text = build_review_card_html(
         item,
         nlp,
-        link_as_anchor=False,
+        link_as_anchor=True,
         banner=banner,
         editing_text=editing_text,
         audit_logs=audit_logs,

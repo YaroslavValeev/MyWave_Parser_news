@@ -317,6 +317,7 @@ def test_build_caption_uses_safe_title_and_avoids_title_only_summary_fallback():
     assert "Пост из ДИАЛОГИ О РЫБАЛКЕ #347" in caption
     assert "российская певица" not in caption
     assert "нет текстового контента" in caption
+    assert 'href="https://t.me/talktofish/347">Источник</a>' in caption
 
 
 def test_build_caption_merges_notes_without_author_block_when_no_merged_text():
@@ -355,6 +356,7 @@ def test_build_caption_uses_merged_text_as_ready_post_without_owner_meta_block()
     assert "Собрал для себя главное по этой новости" in caption
     assert "Оригинальный заголовок" not in caption
     assert "<b>Мнение автора</b>" not in caption
+    assert 'href="https://example.com/post/202">Источник</a>' in caption
     assert ">сайт</a>" in caption
     assert ">тг-админ</a>" in caption
 
@@ -376,4 +378,5 @@ def test_build_caption_prefers_summary_and_raw_owner_notes():
     assert "Короткое саммари." in caption
     assert "Мой комментарий почти как есть!!!" in caption
     assert "Старый rewrite" not in caption
+    assert 'href="https://example.com/post/204">Источник</a>' in caption
     assert ">сайт</a>" in caption
