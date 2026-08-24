@@ -405,6 +405,7 @@ async def test_save_owner_review_comment_forces_regeneration(repo: AsyncNewsRepo
     with (
         patch("nlp.openai_client.get_openai_client", AsyncMock(return_value=mock_client)),
         patch.object(config, "OPENAI_API_KEY", "test-key"),
+        patch.object(config, "OWNER_POST_USE_LLM_REWRITE", True),
         patch.dict("os.environ", {"PYTEST_CURRENT_TEST": ""}),
     ):
         merged = await save_owner_review_comment(

@@ -34,6 +34,7 @@ from services.media_upload import find_local_cover_paths, media_upload_url, uplo
 from services.publication import PublicationSendError, PublicationService
 from services.raw_feed_sync import sync_media_fields
 from storage.repository import AsyncNewsRepository
+from telegram_bot.client_copy import training_media_request_html
 from telegram_bot.access import is_bot_operator
 from telegram_bot.views import (
     REVIEW_QUEUE_LIMIT,
@@ -361,7 +362,7 @@ HELP_HTML = (
     "📊 <b>Статус</b> — краткая сводка по БД (то же, что <code>/stats</code>).\n"
     "🧪 <b>/media_diag</b> — экспресс-диагностика цепочки обложек (endpoint/token/fallback).\n"
     "Команда <code>/report</code> — развёрнутый отчёт: очередь публикации, канал, подсказки по ошибкам.\n\n"
-    "Команды: <code>/parse</code>, <code>/probe</code>, <code>/cancel</code>, <code>/stats</code>, <code>/report</code>.\n"
+    "Команды: <code>/parse</code>, <code>/probe</code>, <code>/cancel</code>, <code>/stats</code>, <code>/report</code>, <code>/training_copy</code>.\n"
     "<code>/requeue_nlp [N]</code> — повторно отправить в NLP до N записей из <code>error</code> (по умолчанию 30, максимум 500).\n"
     "Используйте после устранения причины ошибок NLP: например, неверный <code>OPENAI_API_KEY</code>, недоступная модель "
     "или временный сетевой сбой API.\n"
@@ -565,6 +566,14 @@ def create_router(repository: AsyncNewsRepository, bot: Bot) -> Router:
     @router.message(or_f(Command("help"), F.text == MENU_HELP))
     async def cmd_help(message: Message):
         await message.answer(HELP_HTML, parse_mode="HTML")
+
+    @router.message(Command("training_copy"))
+    async def cmd_training_copy(message: Message):
+        uid = message.from_user.id if message.from_user else None
+        if not is_bot_operator(uid):
+            await message.answer("Команда только для оператора бота.")
+            return
+        await message.answer(training_media_request_html(), parse_mode="HTML")
 
     async def _do_parse(message: Message) -> None:
         uid = message.from_user.id if message.from_user else None

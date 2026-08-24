@@ -181,6 +181,8 @@ class SchedulerService:
                 report.sources_ok,
                 report.sources_total,
             )
+            if report.sources_failed:
+                await self._notify_collect_failures(report)
         except ParseAllSourcesBusyError:
             LOGGER.info(
                 "collect_sources skipped: parse_all_sources already running (manual /parse or overlap)"
@@ -270,6 +272,22 @@ class SchedulerService:
             await self._bot.send_message(chat_id, text, parse_mode="HTML")
         except Exception:  # noqa: BLE001
             LOGGER.exception("daily_stats job failed to send message")
+
+    async def _notify_collect_failures(self, report) -> None:
+        chat_id = self._resolve_editors_chat_id()
+        if chat_id is None:
+            return
+        from utils.collect_report import format_collect_report_html, load_collect_report
+
+        text = (
+            "<b>Сбор источников: есть ошибки</b>\n"
+            f"Успешно {report.sources_ok}/{report.sources_total}, ошибок {report.sources_failed}."
+            f"{format_collect_report_html(load_collect_report())}"
+        )
+        try:
+            await self._bot.send_message(chat_id, text, parse_mode="HTML")
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("collect failure alert failed to send")
 
     def _resolve_editors_chat_id(self) -> Optional[int | str]:
         if not config.EDITORS_CHAT_ID:

@@ -11,6 +11,7 @@ from config.settings import config
 from services.manual_collect import ManualSource, _fetch_items
 from storage.data import save_contacts, save_news
 from storage.sources import list_sources
+from utils.collect_report import save_collect_report
 
 LOGGER = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ async def _parse_all_sources_impl() -> ParseAllSummary:
     t0 = time.perf_counter()
 
     skip_media = getattr(config, "TELEGRAM_SKIP_MEDIA_FULL_COLLECT", True)
+    source_results: list[dict[str, object]] = []
     for source in sources:
         manual_source = ManualSource(
             type=source.type,
@@ -120,11 +122,22 @@ async def _parse_all_sources_impl() -> ParseAllSummary:
                 limit=getattr(config, "MAX_MESSAGES", None),
                 download_media=False if manual_source.type == "telegram" and skip_media else True,
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             sources_failed += 1
             LOGGER.exception("Failed to collect source %s", source.url)
+            source_results.append(
+                {
+                    "type": manual_source.type,
+                    "name": manual_source.name,
+                    "url": source.url,
+                    "ok": False,
+                    "news_saved": 0,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
             continue
 
+        saved = 0
         if items:
             saved = await save_news(items)
             total_news_saved += saved
@@ -140,6 +153,16 @@ async def _parse_all_sources_impl() -> ParseAllSummary:
             LOGGER.debug(
                 "Saved %s contacts from %s", stored_contacts, manual_source.url
             )
+        source_results.append(
+            {
+                "type": manual_source.type,
+                "name": manual_source.name,
+                "url": source.url,
+                "ok": True,
+                "news_saved": saved,
+                "error": "",
+            }
+        )
 
     if getattr(config, "ENGAGEMENT_COLLECT_ENABLED", False):
         try:
@@ -164,6 +187,14 @@ async def _parse_all_sources_impl() -> ParseAllSummary:
         len(sources),
         len(sources),
         len(sources_all),
+    )
+    save_collect_report(
+        sources_total=len(sources),
+        sources_failed=sources_failed,
+        news_saved=total_news_saved,
+        contacts_saved=total_contacts_saved,
+        elapsed_seconds=elapsed,
+        results=source_results,
     )
     return ParseAllSummary(
         news_saved=total_news_saved,

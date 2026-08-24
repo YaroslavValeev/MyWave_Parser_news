@@ -187,27 +187,29 @@ class OpenAIClient:
 
     async def author_rewrite(
         self,
-        base_summary: str,
+        source_text: str,
         author_notes: str,
         *,
+        base_summary: str | None = None,
         lang: str | None = None,
     ) -> str:
-        """Переписать текст с учётом комментариев автора."""
+        """Переписать оригинал как личный пост автора с учётом комментария."""
 
         prompt = (
-            "Перепиши текст в формате заметки от первого лица,"
-            " опираясь на комментарии автора."
-            " Сохрани деловой стиль и русский язык."
+            "Перепиши материал как личный пост автора канала, от лица автора канала. "
+            "Не используй заголовок «Личная заметка». "
+            "Опирайся на комментарии автора, сохрани факты и деловой русский язык."
         )
         if lang:
             prompt = (
-                "Перепиши текст на языке {lang} в стиле личной заметки,"
-                " учитывая комментарии автора."
+                "Перепиши материал на языке {lang} как личный пост автора канала, "
+                "от лица автора канала. Не используй заголовок «Личная заметка»."
             ).format(lang=lang)
-        response = await self._chat_completion(
-            prompt,
-            f"Оригинальное саммари:\n{base_summary}\n\nКомментарий автора:\n{author_notes}",
-        )
+        user_parts = [f"Оригинальный текст:\n{source_text}"]
+        if base_summary:
+            user_parts.append(f"Саммари:\n{base_summary}")
+        user_parts.append(f"Комментарий автора:\n{author_notes}")
+        response = await self._chat_completion(prompt, "\n\n".join(user_parts))
         return _normalize_text(response)
 
     async def _chat_completion(self, system_prompt: str, user_content: str) -> str:

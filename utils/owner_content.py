@@ -169,6 +169,7 @@ async def ensure_merged_owner_post(
             rewritten = await client.author_rewrite(
                 source_text,
                 notes,
+                base_summary=summary,
                 lang=config.NL_LANG,
             )
             rewritten = strip_author_meta_labels(rewritten)

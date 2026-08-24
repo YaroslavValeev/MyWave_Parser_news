@@ -519,10 +519,12 @@ class PublicationService:
             if body:
                 parts.append(html.escape(str(body)))
         elif summary and notes:
-            # Канон Owner: саммари + почти сырой комментарий (без LLM-rewrite).
+            # Канон Owner: саммари + почти сырой комментарий (без LLM-rewrite),
+            # но нормализуем Markdown/артефакты одинаково, чтобы Telegram и сайт
+            # не расходились по “визуальным” маркерам (заголовки #, акцент и т.п.).
             parts.append(f"<b>{title}</b>")
-            parts.append(html.escape(summary))
-            parts.append(html.escape(notes))
+            parts.append(html.escape(normalize_publication_text(summary, preserve_paragraphs=True)))
+            parts.append(html.escape(normalize_publication_text(notes, preserve_paragraphs=True)))
         elif merged_text:
             body = normalize_publication_text(merged_text, preserve_paragraphs=True)
             if body:

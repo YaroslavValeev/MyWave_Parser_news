@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, dev, feat/p0-security-cleanup ]
+    branches: [ main, dev, feat/p0-security-cleanup, feat/blog-editorial-media-pipeline ]
   pull_request:
-    branches: [ main, dev, feat/p0-security-cleanup ]
+    branches: [ main, dev, feat/p0-security-cleanup, feat/blog-editorial-media-pipeline ]
 
 jobs:
   secret-scan-tree:
@@ -137,4 +137,10 @@ jobs:
             tests/test_media_upload.py \
             tests/test_card_preview_text.py \
             tests/test_raw_feed_publish_contract.py \
-            tests/test_owner_review_telegram.py
+            tests/test_owner_review_telegram.py \
+            tests/test_telegram_editorial.py \
+            tests/test_web_editorial.py \
+            tests/test_client_copy.py \
+            tests/test_collect_report.py \
+            tests/test_scheduler_lock.py \
+            tests/test_publication_service.py

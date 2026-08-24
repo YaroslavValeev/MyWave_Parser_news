@@ -38,6 +38,8 @@ from services.raw_feed_sync import (
 )
 from storage.repository import AsyncNewsRepository
 from utils.card_preview_text import PUBLIC_TITLE_MAX_LEN, lead_from_text, to_card_preview_text
+from utils.telegram_editorial import format_telegram_editorial_html, hints_from_item
+from utils.web_editorial import web_html_from_item
 from utils.item_context import derive_item_title, get_item_text_context, is_title_only_summary_fallback
 from utils.media_utils import (
     build_media_contract_diagnostic,
@@ -50,6 +52,7 @@ from utils.owner_content import ensure_merged_owner_post, ensure_owner_editing_c
 from utils.item_freshness import is_item_stale_for_review, review_max_age_days
 from utils.russian_summary import ensure_russian_summary, is_probably_non_russian
 from utils.status_labels_ru import format_status_counts_ru, status_label_ru
+from utils.collect_report import format_collect_report_html, load_collect_report
 from utils.telegram_session import TelegramSessionManager
 from utils.video_providers import resolve_video_media
 
@@ -580,6 +583,11 @@ def build_review_card_html(
         if media_diag.media_error:
             media_line += f" · error: <code>{html.escape(media_diag.media_error)}</code>"
         parts.append(media_line)
+        editorial_nlp = dict(nlp) if isinstance(nlp, Mapping) else {}
+        if summary_hidden:
+            editorial_nlp["summary"] = ""
+        parts.append(format_telegram_editorial_html(hints_from_item(item, editorial_nlp)))
+        parts.append(web_html_from_item(item, editorial_nlp))
         if audit_logs:
             parts.append("\n\n<b>Audit</b>")
             for entry in audit_logs[:5]:
@@ -1140,7 +1148,7 @@ async def handle_author_rewrite(repo: AsyncNewsRepository, query: CallbackQuery,
         return
     nlp = await repo.get_nlp_results(item_id) or {}
     item, nlp, _editing_text = await ensure_owner_editing_context(item, nlp)
-    source_text = owner_editing_text(item, nlp) or str(nlp.get("summary") or "").strip()
+    source_text = owner_editing_text(item, nlp) or str(item.get("content") or "").strip()
     summary = str(nlp.get("summary") or "").strip()
     notes = str(nlp.get("author_notes") or "").strip()
     if not source_text and not summary:
@@ -1153,9 +1161,26 @@ async def handle_author_rewrite(repo: AsyncNewsRepository, query: CallbackQuery,
         )
         return
     await query.answer("Переписываю текст с учётом комментария…")
-    merged_text = strip_author_meta_labels(
-        await ensure_merged_owner_post(item, nlp, force=True)
-    )
+    merged_text = ""
+    pytest_active = bool(os.getenv("PYTEST_CURRENT_TEST"))
+    if getattr(config, "OPENAI_API_KEY", None) and not pytest_active:
+        from nlp.openai_client import get_openai_client
+
+        try:
+            client = await get_openai_client()
+            rewritten = await client.author_rewrite(
+                source_text or summary,
+                notes,
+                base_summary=summary,
+                lang=getattr(config, "NL_LANG", "ru"),
+            )
+            merged_text = strip_author_meta_labels(rewritten)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("handle_author_rewrite llm failed: %s", exc)
+    if not merged_text:
+        merged_text = strip_author_meta_labels(
+            await ensure_merged_owner_post(item, nlp, force=True)
+        )
     if not merged_text:
         if query.message:
             await query.message.answer("Не удалось собрать финальную версию.")
@@ -1217,6 +1242,7 @@ def format_stats(
     )
     if channel_commenters is not None:
         lines.extend(["", "<b>Комментаторы канала</b>", f"В базе: {channel_commenters}"])
+    lines.append(format_collect_report_html(load_collect_report()))
     return "\n".join(lines)
 
 
@@ -1280,6 +1306,7 @@ def format_report(
             "При блокировке YouTube/RSS с этого IP задайте <code>HTTP_FEED_PROXY</code> в .env.",
         ]
     )
+    lines.append(format_collect_report_html(load_collect_report()))
     return "\n".join(lines)
 
 
