@@ -10,7 +10,7 @@ from typing import Iterable, Tuple
 from urllib.parse import urlparse
 
 from config.settings import config
-from storage.data import save_contacts, save_news
+from storage.data import save_contacts
 
 LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +44,10 @@ async def collect_single_source(
     limit: int | None = None,
 ) -> ManualCollectResult:
     """Collect one source immediately and persist fresh items."""
+    import time
+
+    from services.source_telemetry import SourceTickMetrics
+    from storage.data import get_repository, save_news_detailed
 
     normalized_url = url.strip()
     if not normalized_url:
@@ -51,8 +55,43 @@ async def collect_single_source(
 
     resolved_type = (source_type or guess_source_type(normalized_url)).lower()
     source = ManualSource(type=resolved_type, url=normalized_url, name=normalized_url)
+    tick_t0 = time.perf_counter()
 
-    items, contacts = await _fetch_items(source, limit=limit)
+    try:
+        items, contacts = await _fetch_items(source, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        latency_ms = (time.perf_counter() - tick_t0) * 1000.0
+        try:
+            repo = await get_repository()
+            tick = SourceTickMetrics(
+                source_type=resolved_type,
+                source_name=normalized_url,
+                source_url=normalized_url,
+                ok=False,
+                latency_ms=latency_ms,
+                errors=1,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            await repo.upsert_source_health(
+                {
+                    "source_key": tick.key,
+                    "source_type": tick.source_type,
+                    "source_name": tick.source_name,
+                    "source_url": tick.source_url,
+                    "ok": False,
+                    "latency_ms": tick.latency_ms,
+                    "collected": 0,
+                    "parsed": 0,
+                    "duplicates": 0,
+                    "rejected": 0,
+                    "errors": 1,
+                    "error": tick.error,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("manual collect source_health failed")
+        raise
+
     total = len(items)
 
     cutoff = since.astimezone(timezone.utc) if since else None
@@ -65,21 +104,60 @@ async def collect_single_source(
         filtered = items
         contact_candidates = contacts
 
-    saved = await save_news(filtered)
+    rejected = total - len(filtered)
+    stats = await save_news_detailed(filtered) if filtered else None
+    saved = stats.saved if stats else 0
+    duplicates = stats.duplicates if stats else 0
+    write_errors = stats.errors if stats else 0
     contacts_saved = await save_contacts(contact_candidates) if contact_candidates else 0
+    latency_ms = (time.perf_counter() - tick_t0) * 1000.0
+    try:
+        repo = await get_repository()
+        tick = SourceTickMetrics(
+            source_type=resolved_type,
+            source_name=normalized_url,
+            source_url=normalized_url,
+            ok=write_errors == 0,
+            latency_ms=latency_ms,
+            collected=total,
+            parsed=len(filtered),
+            saved=saved,
+            duplicates=duplicates,
+            rejected=rejected,
+            errors=write_errors,
+            error="" if write_errors == 0 else f"persist_errors={write_errors}",
+        )
+        await repo.upsert_source_health(
+            {
+                "source_key": tick.key,
+                "source_type": tick.source_type,
+                "source_name": tick.source_name,
+                "source_url": tick.source_url,
+                "ok": tick.ok,
+                "latency_ms": tick.latency_ms,
+                "collected": tick.collected,
+                "parsed": tick.parsed,
+                "duplicates": tick.duplicates,
+                "rejected": tick.rejected,
+                "errors": tick.errors,
+                "error": tick.error,
+            }
+        )
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("manual collect source_health failed")
     LOGGER.info(
         "Manual collect finished: url=%s type=%s total=%s saved=%s filtered_out=%s contacts_saved=%s",
         normalized_url,
         resolved_type,
         total,
         saved,
-        total - len(filtered),
+        rejected,
         contacts_saved,
     )
     return ManualCollectResult(
         total=total,
         saved=saved,
-        filtered_out=total - len(filtered),
+        filtered_out=rejected,
         source_type=resolved_type,
         since=cutoff,
         contacts_saved=contacts_saved,
@@ -102,9 +180,14 @@ def guess_source_type(url: str) -> str:
     return "website"
 
 
-async def _fetch_items(source: ManualSource, limit: int | None = None) -> Tuple[list[dict], list[dict]]:
+async def _fetch_items(
+    source: ManualSource,
+    limit: int | None = None,
+    *,
+    download_media: bool = True,
+) -> Tuple[list[dict], list[dict]]:
     if source.type == "telegram":
-        return await _fetch_telegram_items(source, limit)
+        return await _fetch_telegram_items(source, limit, download_media=download_media)
     if source.type == "rss":
         parser = _load_rss_parser()
         return ([_convert_raw_entry(entry, source) for entry in parser(source, [])], [])
@@ -118,7 +201,12 @@ async def _fetch_items(source: ManualSource, limit: int | None = None) -> Tuple[
     raise ValueError(f"Неизвестный тип источника: {source.type}")
 
 
-async def _fetch_telegram_items(source: ManualSource, limit: int | None) -> Tuple[list[dict], list[dict]]:
+async def _fetch_telegram_items(
+    source: ManualSource,
+    limit: int | None,
+    *,
+    download_media: bool = True,
+) -> Tuple[list[dict], list[dict]]:
     from utils.telegram_session import TelegramSessionManager
 
     session_manager = TelegramSessionManager(
@@ -135,7 +223,7 @@ async def _fetch_telegram_items(source: ManualSource, limit: int | None) -> Tupl
     contacts_parser_cls = _load_contacts_parser()
     contacts_parser = contacts_parser_cls(client)
     items: list[dict] = []
-    async for raw in parser.parse(client, source):  # type: ignore[arg-type]
+    async for raw in parser.parse(client, source, download_media=download_media):  # type: ignore[arg-type]
         items.append(_convert_raw_entry(raw, source))
     contacts = await contacts_parser.parse_contacts(source)
     await session_manager.close_client()

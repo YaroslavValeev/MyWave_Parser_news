@@ -15,8 +15,9 @@ LOGGER = logging.getLogger(__name__)
 
 STATUS_PROCESSING = "processing"
 STATUS_ERROR = "error"
+# NLP никогда не публикует сам: даже «хороший» материал → review (нужен комментарий Owner).
 STATUS_MAP = {
-    PUBLISH: "approved",
+    PUBLISH: "review",
     REVIEW: "review",
     DISCARD: "discarded",
 }
@@ -54,6 +55,14 @@ async def process_nlp_queue(
             extra_payload: dict[str, object] = {
                 "sanitized_text": text,
             }
+            try:
+                from services.semantic_dedup import maybe_attach_event_id
+
+                event_id = maybe_attach_event_id(item, {"summary": summary})
+                if event_id:
+                    extra_payload["event_id"] = event_id
+            except Exception:  # noqa: BLE001
+                LOGGER.debug("semantic event_id attach skipped", exc_info=True)
             cover_prompt = item.get("title") or summary
             if cover_prompt:
                 try:

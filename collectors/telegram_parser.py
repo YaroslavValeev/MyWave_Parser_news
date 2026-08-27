@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from abc import ABC, abstractmethod
 from typing import Generator
-from utils.helpers import download_media # Импортируем из utils/helpers
+from utils.helpers import download_media as download_media_helper  # Импортируем из utils/helpers
 from telethon import TelegramClient
 from config.settings import config
 
@@ -50,13 +50,20 @@ class TelethonParser(BaseParser):
         """
         super().__init__(limit)
 
-    async def parse(self, client: TelegramClient, source) -> Generator[dict, None, None]: # type: ignore
+    async def parse(
+        self,
+        client: TelegramClient,
+        source,
+        *,
+        download_media: bool = True,
+    ) -> Generator[dict, None, None]:  # type: ignore
         """
         Парсит сообщения из Telegram-канала и возвращает данные по структуре raw_feed.
 
         Args:
             client (TelegramClient): Клиент Telegram.
             source: Источник данных (объект с атрибутом url).
+            download_media: скачивать вложения на диск (False — только метаданные/текст).
 
         Yields:
             dict: Словарь с данными сообщения.
@@ -80,8 +87,8 @@ class TelethonParser(BaseParser):
                     text = message.text or ""
                     media_downloaded = False
                     media_links = []
-                    if message.media:
-                        media_downloaded = await download_media(message)
+                    if message.media and download_media:
+                        media_downloaded = await download_media_helper(message)
                         # Здесь можно добавить путь к скачанному файлу в media_links
                         # media_links.append(путь_к_файлу)
 
@@ -153,39 +160,3 @@ class TelethonParser(BaseParser):
         delay = random.uniform(1.5, 4.0)
         logger.debug(f"Задержка: {delay:.2f} сек")
         await asyncio.sleep(delay)
-
-async def download_media(message) -> bool:
-    """
-    Загрузка медиа с задержкой.
-
-    Args:
-        message: Сообщение Telegram, содержащее медиа.
-
-    Returns:
-        bool: True, если загрузка прошла успешно, False в случае ошибки.
-    """
-    try:
-        if message.media:
-            if message.photo:
-                await message.download_media(file="downloads/")
-                await asyncio.sleep(config.MEDIA_DOWNLOAD_DELAY)  # Пауза из конфигурации
-                return True
-            else:
-                return False
-    except Exception as e:
-        logger.error(f"Ошибка загрузки медиа: {e}")
-        return False
-    return False
-
-# Пример использования
-async def main():
-    client = TelegramClient('session', config.TELEGRAM_API_ID_USER, config.TELEGRAM_API_HASH_USER)
-    await client.start(phone=config.TELEGRAM_PHONE)
-    parser = TelethonParser(limit=10)
-    source = type('Source', (), {'url': 'https://t.me/example_channel'})()  # Пример источника
-    async for msg in parser.parse(client, source):
-        logger.info(f"Получено сообщение: {msg}")
-    await client.disconnect()
-
-if __name__ == "__main__":
-    asyncio.run(main())

@@ -1,12 +1,28 @@
 import asyncio
-import os
 import logging
+import os
+
 from telethon import TelegramClient
 from telethon.errors import AuthKeyUnregisteredError, SessionPasswordNeededError
 from telethon.sessions import StringSession
-import os
 
 logger = logging.getLogger(__name__)
+
+
+def _telethon_proxy_from_env():
+    """Собрать tuple proxy для Telethon из PROXY_* (или None)."""
+    enabled = os.getenv("PROXY_ENABLED", "False").lower() == "true"
+    host = (os.getenv("PROXY_HOST") or "").strip()
+    if not enabled or not host:
+        return None
+    ptype = (os.getenv("PROXY_TYPE") or "socks5").strip().lower()
+    port = int(os.getenv("PROXY_PORT", "1080"))
+    user = os.getenv("PROXY_USER")
+    pwd = os.getenv("PROXY_PASS")
+    if user and pwd:
+        return (ptype, host, port, True, user, pwd)
+    return (ptype, host, port)
+
 
 class TelegramSessionManager:
     def __init__(self, api_id, api_hash, phone):
@@ -14,20 +30,29 @@ class TelegramSessionManager:
         self.api_hash = api_hash
         self.phone = phone
         # session_file is a fallback file-based session
-        self.session_file = os.getenv('TELETHON_SESSION_FILE', 'session_name.session')
+        self.session_file = os.getenv("TELETHON_SESSION_FILE", "session_name.session")
         # allow using a pre-generated string session to avoid interactive auth
         # TELETHON_STRING_SESSION can contain the session string directly
-        self.string_session = os.getenv('TELETHON_STRING_SESSION')
+        self.string_session = os.getenv("TELETHON_STRING_SESSION")
         # Alternatively, read the session string from a dedicated file
-        self.string_session_file = os.getenv('TELETHON_STRING_SESSION_FILE', 'session_string.txt')
+        self.string_session_file = os.getenv(
+            "TELETHON_STRING_SESSION_FILE", "session_string.txt"
+        )
         if not self.string_session and os.path.exists(self.string_session_file):
             try:
-                with open(self.string_session_file, 'r', encoding='utf-8') as fh:
+                with open(self.string_session_file, "r", encoding="utf-8") as fh:
                     self.string_session = fh.read().strip()
             except Exception:
                 # non-fatal — we'll fall back to file-based session or interactive login
                 self.string_session = None
+        self.proxy = _telethon_proxy_from_env()
         self.client = None
+
+    def _client_kwargs(self) -> dict:
+        kwargs: dict = {"connection_retries": 3}
+        if self.proxy:
+            kwargs["proxy"] = self.proxy
+        return kwargs
 
     async def get_client(self):
         if self.client is None:
@@ -39,7 +64,12 @@ class TelegramSessionManager:
 
         # If a string session is provided via env, use it (no interactive code needed)
         if self.string_session:
-            client = TelegramClient(StringSession(self.string_session), self.api_id, self.api_hash)
+            client = TelegramClient(
+                StringSession(self.string_session),
+                self.api_id,
+                self.api_hash,
+                **self._client_kwargs(),
+            )
             try:
                 await client.connect()
                 if not await client.is_user_authorized():
@@ -62,7 +92,8 @@ class TelegramSessionManager:
                     test_client = TelegramClient(
                         self.session_file,
                         self.api_id,
-                        self.api_hash
+                        self.api_hash,
+                        **self._client_kwargs(),
                     )
                     await test_client.connect()
                     if not await test_client.is_user_authorized():
@@ -70,12 +101,14 @@ class TelegramSessionManager:
                         await test_client.disconnect()  # Явное отключение перед удалением
                         try:
                             # backup instead of outright deleting to avoid accidental data loss
-                            os.replace(self.session_file, self.session_file + '.bak')
+                            os.replace(self.session_file, self.session_file + ".bak")
                             logger.info(f"Файл сессии переименован в {self.session_file}.bak")
                             break
                         except PermissionError as pe:
                             if attempt == max_retries - 1:
-                                logger.error(f"Failed to backup session file after {max_retries} attempts: {pe}")
+                                logger.error(
+                                    f"Failed to backup session file after {max_retries} attempts: {pe}"
+                                )
                                 return None
                             await asyncio.sleep(1)  # Wait before retrying.
                             continue
@@ -96,7 +129,7 @@ class TelegramSessionManager:
             self.session_file,
             self.api_id,
             self.api_hash,
-            connection_retries=3
+            **self._client_kwargs(),
         )
 
         try:
@@ -107,34 +140,34 @@ class TelegramSessionManager:
                 try:
                     await client.start(
                         phone=self.phone,
-                        code_callback=lambda: input("Введите код: ")
+                        code_callback=lambda: input("Введите код: "),
                     )
                 except SessionPasswordNeededError:
                     logger.warning("Требуется 2FA пароль")
                     await client.start(
                         phone=self.phone,
-                        password=lambda: input("Введите 2FA пароль: ")
+                        password=lambda: input("Введите 2FA пароль: "),
                     )
 
             logger.info(f"Авторизован как: {await client.get_me()}")
             # After successful authorization, save string session to a file so
-            # future runs can avoid interactive login. Also print instruction
-            # so the user can set TELETHON_STRING_SESSION if desired.
+            # future runs can avoid interactive login.
             try:
                 ss = StringSession.save(client.session)
-                # Save to configured session string file and inform the user.
                 try:
-                    # Write atomically
                     tmp = f"{self.string_session_file}.tmp"
-                    with open(tmp, 'w', encoding='utf-8') as fh:
+                    with open(tmp, "w", encoding="utf-8") as fh:
                         fh.write(ss)
                     os.replace(tmp, self.string_session_file)
                     logger.info(
                         f"String session saved to {self.string_session_file}.\n"
-                        "To avoid future code prompts, set TELETHON_STRING_SESSION env var to its contents or keep this file secure."
+                        "To avoid future code prompts, keep this file secure "
+                        "(or set TELETHON_STRING_SESSION)."
                     )
                 except Exception as write_err:
-                    logger.warning(f"Failed to persist string session to {self.string_session_file}: {write_err}")
+                    logger.warning(
+                        f"Failed to persist string session to {self.string_session_file}: {write_err}"
+                    )
             except Exception:
                 # ignore saving errors — session still works in-memory
                 pass

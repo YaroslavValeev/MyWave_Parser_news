@@ -1,19 +1,9 @@
-"""Обёртка над OpenAI SDK для задач NLP проекта."""
 from __future__ import annotations
 
 import asyncio
 import importlib
-import os
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, TYPE_CHECKING
-
-from config.settings import config
-"""Обёртка над OpenAI SDK для задач NLP проекта."""
-from __future__ import annotations
-
-import asyncio
-import importlib
+import inspect
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +15,29 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 else:
     AsyncOpenAI = Any  # type: ignore[assignment]
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _httpx_proxy_client_kwargs(proxy_url: str) -> dict[str, Any]:
+    """Собрать kwargs для httpx.AsyncClient под установленную версию.
+
+    httpx<0.28: ``proxies=``
+    httpx>=0.28: ``proxy=``
+    """
+    import httpx
+
+    url = str(proxy_url).strip()
+    if not url:
+        return {}
+    params = inspect.signature(httpx.AsyncClient.__init__).parameters
+    if "proxy" in params:
+        return {"proxy": url}
+    if "proxies" in params:
+        return {"proxies": url}
+    raise RuntimeError(
+        f"httpx.AsyncClient не принимает proxy/proxies (httpx {httpx.__version__})"
+    )
 
 
 @dataclass(slots=True)
@@ -102,6 +115,10 @@ class OpenAIClient:
     async def moderate(self, text: str) -> dict[str, Any]:
         """Выполнить модерацию контента."""
 
+        if getattr(config, "OPENAI_SKIP_MODERATION", False):
+            LOGGER.info("OpenAI moderation skipped (OPENAI_SKIP_MODERATION=true)")
+            return {"flagged": False, "categories": {}, "skipped": True}
+
         client = await self._ensure_client()
         result = await client.moderations.create(
             model="omni-moderation-latest",
@@ -170,27 +187,29 @@ class OpenAIClient:
 
     async def author_rewrite(
         self,
-        base_summary: str,
+        source_text: str,
         author_notes: str,
         *,
+        base_summary: str | None = None,
         lang: str | None = None,
     ) -> str:
-        """Переписать текст с учётом комментариев автора."""
+        """Переписать оригинал как личный пост автора с учётом комментария."""
 
         prompt = (
-            "Перепиши текст в формате заметки от первого лица,"
-            " опираясь на комментарии автора."
-            " Сохрани деловой стиль и русский язык."
+            "Перепиши материал как личный пост автора канала, от лица автора канала. "
+            "Не используй заголовок «Личная заметка». "
+            "Опирайся на комментарии автора, сохрани факты и деловой русский язык."
         )
         if lang:
             prompt = (
-                "Перепиши текст на языке {lang} в стиле личной заметки,"
-                " учитывая комментарии автора."
+                "Перепиши материал на языке {lang} как личный пост автора канала, "
+                "от лица автора канала. Не используй заголовок «Личная заметка»."
             ).format(lang=lang)
-        response = await self._chat_completion(
-            prompt,
-            f"Оригинальное саммари:\n{base_summary}\n\nКомментарий автора:\n{author_notes}",
-        )
+        user_parts = [f"Оригинальный текст:\n{source_text}"]
+        if base_summary:
+            user_parts.append(f"Саммари:\n{base_summary}")
+        user_parts.append(f"Комментарий автора:\n{author_notes}")
+        response = await self._chat_completion(prompt, "\n\n".join(user_parts))
         return _normalize_text(response)
 
     async def _chat_completion(self, system_prompt: str, user_content: str) -> str:
@@ -221,7 +240,30 @@ class OpenAIClient:
                 async_openai_cls = getattr(module, "AsyncOpenAI", None)
                 if async_openai_cls is None:
                     raise RuntimeError("AsyncOpenAI class is unavailable in openai package")
-                self._client = async_openai_cls(api_key=self._settings.api_key)
+                proxy = (
+                    getattr(config, "OPENAI_HTTP_PROXY", None)
+                    or os.getenv("OPENAI_HTTP_PROXY")
+                    or os.getenv("HTTP_OPENAI_PROXY")
+                    or ""
+                ).strip()
+                if proxy:
+                    import httpx
+
+                    http_client = httpx.AsyncClient(
+                        **_httpx_proxy_client_kwargs(proxy),
+                        timeout=httpx.Timeout(120.0, connect=30.0),
+                    )
+                    self._client = async_openai_cls(
+                        api_key=self._settings.api_key,
+                        http_client=http_client,
+                    )
+                    # Не логируем URL (там может быть пароль).
+                    LOGGER.info(
+                        "OpenAI client via HTTP proxy configured (endpoint=%s)",
+                        proxy.split("@")[-1] if "@" in proxy else "(no-host)",
+                    )
+                else:
+                    self._client = async_openai_cls(api_key=self._settings.api_key)
             return self._client
 
 
@@ -253,6 +295,7 @@ def _normalize_text(value: str) -> str:
 __all__ = [
     "OpenAIClient",
     "OpenAISettings",
+    "_httpx_proxy_client_kwargs",
     "configure_openai_client",
     "get_openai_client",
 ]
