@@ -380,3 +380,10 @@ def test_build_caption_prefers_summary_and_raw_owner_notes():
     assert "Старый rewrite" not in caption
     assert 'href="https://example.com/post/204">Источник</a>' in caption
     assert ">сайт</a>" in caption
+
+
+def test_telegram_caption_hard_limit_gate():
+    from utils.telegram_editorial import TELEGRAM_HARD_CHARS
+
+    assert PublicationService._telegram_caption_too_long("x" * TELEGRAM_HARD_CHARS) is False
+    assert PublicationService._telegram_caption_too_long("x" * (TELEGRAM_HARD_CHARS + 1)) is True

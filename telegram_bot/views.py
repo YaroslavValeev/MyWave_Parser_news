@@ -899,7 +899,8 @@ async def show_review_item_card(
     if not item:
         await message.answer("Материал не найден.")
         return
-    if is_item_stale_for_review(item):
+    status = str(item.get("status") or "").strip().lower()
+    if is_item_stale_for_review(item) and status in ("review", "new"):
         await repo.expire_stale_review_items([item_id])
         await message.answer(
             f"Материал снят с ревью: дата публикации старше {review_max_age_days()} дн."

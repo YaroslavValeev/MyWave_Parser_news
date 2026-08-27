@@ -64,6 +64,7 @@ from utils.media_utils import (
     iter_media_candidates,
     normalize_media_ref,
 )
+from utils.telegram_editorial import TELEGRAM_HARD_CHARS
 
 if TYPE_CHECKING:  # pragma: no cover - typing helper
     from aiogram.types import FSInputFile as AiogramFSInputFile
@@ -203,6 +204,14 @@ class PublicationService:
             quality_issues = self._publication_quality_issues(item, nlp)
             if quality_issues:
                 await self._handle_needs_cleanup(item_id, str(item.get("status") or ""), quality_issues)
+                continue
+            caption = self._build_caption(item, nlp)
+            if self._telegram_caption_too_long(caption):
+                await self._handle_needs_cleanup(
+                    item_id,
+                    str(item.get("status") or ""),
+                    ["telegram_caption_too_long"],
+                )
                 continue
             considered += 1
             if considered > limit:
@@ -499,6 +508,11 @@ class PublicationService:
         title = normalize_public_title(derive_item_title(item, max_len=140))
         excerpt = to_card_preview_text(clean_body, max_len=260)
         return public_text_quality_issues(title=title, excerpt=excerpt, body=clean_body)
+
+    @staticmethod
+    def _telegram_caption_too_long(caption: str) -> bool:
+        """Hard limit Telegram API: message/caption text cannot exceed 4096 chars."""
+        return len(caption or "") > TELEGRAM_HARD_CHARS
 
     @staticmethod
     def _extract_video_ref(item: Mapping[str, Any]) -> str | AiogramFSInputFile | None:
