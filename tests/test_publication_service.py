@@ -112,7 +112,7 @@ async def test_publish_skips_localhost_cover_and_uses_local_static_file(monkeypa
 
     assert published == 1
     bot.send_photo.assert_awaited_once()
-    assert bot.send_photo.await_args.kwargs["photo"] == ("file", "downloads\\cover.jpg")
+    assert bot.send_photo.await_args.kwargs["photo"] == ("file", str(local_file.relative_to(tmp_path)))
 
 
 @pytest.mark.asyncio
@@ -387,3 +387,34 @@ def test_telegram_caption_hard_limit_gate():
 
     assert PublicationService._telegram_caption_too_long("x" * TELEGRAM_HARD_CHARS) is False
     assert PublicationService._telegram_caption_too_long("x" * (TELEGRAM_HARD_CHARS + 1)) is True
+
+
+@pytest.mark.asyncio
+async def test_retry_fallback_preserves_exception_without_tenacity(monkeypatch):
+    import builtins
+    import importlib.util
+
+    original_import = builtins.__import__
+
+    def without_tenacity(name, *args, **kwargs):
+        if name == "tenacity":
+            raise ImportError("tenacity unavailable for fallback regression")
+        return original_import(name, *args, **kwargs)
+
+    import services.publication as publication
+
+    spec = importlib.util.spec_from_file_location("publication_fallback_test", publication.__file__)
+    module = importlib.util.module_from_spec(spec)
+    with monkeypatch.context() as context:
+        context.setattr(builtins, "__import__", without_tenacity)
+        spec.loader.exec_module(module)
+    original_error = ValueError("delivery failed")
+
+    @module.retry(stop=module.stop_after_attempt(1), wait=module.wait_fixed(0))
+    async def delivery():
+        raise original_error
+
+    with pytest.raises(module.RetryError) as caught:
+        await delivery()
+    assert caught.value.last_attempt.exception() is original_error
+    assert caught.value.__cause__ is original_error

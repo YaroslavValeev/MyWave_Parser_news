@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main, dev, feat/p0-security-cleanup, feat/blog-editorial-media-pipeline ]
   pull_request:
-    branches: [ main, dev, feat/p0-security-cleanup, feat/blog-editorial-media-pipeline ]
+    branches: [ main, dev, feat/p0-security-cleanup, feat/blog-editorial-media-pipeline, fix/publication-retry-exception ]
 
 jobs:
   secret-scan-tree:
