@@ -138,6 +138,8 @@ jobs:
             tests/test_card_preview_text.py \
             tests/test_raw_feed_publish_contract.py \
             tests/test_owner_review_telegram.py \
+            tests/test_gpt6_text_migration.py \
+            tests/test_text_model_eval.py \
             tests/test_telegram_editorial.py \
             tests/test_web_editorial.py \
             tests/test_client_copy.py \
