@@ -1,4 +1,5 @@
 """Перевод и сборка owner-facing текста для ревью и публикации."""
+
 from __future__ import annotations
 
 import logging
@@ -6,8 +7,16 @@ import re
 from typing import Any, Mapping
 
 from config.settings import config
-from utils.card_preview_text import normalize_public_title, normalize_publication_text, to_card_preview_text
-from utils.item_context import derive_item_title, get_item_text_context
+from utils.card_preview_text import (
+    normalize_public_title,
+    normalize_publication_text,
+    to_card_preview_text,
+)
+from utils.item_context import (
+    derive_item_title,
+    get_item_text_context,
+    is_title_only_summary_fallback,
+)
 from utils.russian_summary import is_probably_non_russian, wants_russian
 
 LOGGER = logging.getLogger(__name__)
@@ -70,7 +79,9 @@ async def translate_text_for_owner(
 
     client = await get_openai_client()
     try:
-        translated = await client.translate_text(source, lang=target_lang, max_len=max_len)
+        translated = await client.translate_text(
+            source, lang=target_lang, max_len=max_len
+        )
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("owner translation failed: %s", exc)
         return source
@@ -78,12 +89,16 @@ async def translate_text_for_owner(
     return translated or source
 
 
-def owner_editing_text(item: Mapping[str, Any], nlp: Mapping[str, Any] | None = None) -> str:
+def owner_editing_text(
+    item: Mapping[str, Any], nlp: Mapping[str, Any] | None = None
+) -> str:
     """Текст, который owner видит для редактирования (предпочтительно перевод)."""
     nlp = nlp or {}
     extra = nlp.get("extra")
     if isinstance(extra, Mapping):
-        cached = str(extra.get("owner_editing_text") or extra.get("translated_text") or "").strip()
+        cached = str(
+            extra.get("owner_editing_text") or extra.get("translated_text") or ""
+        ).strip()
         if cached:
             return cached
     return get_item_text_context(item)
@@ -95,7 +110,9 @@ async def ensure_owner_editing_context(
 ) -> tuple[Mapping[str, Any], Mapping[str, Any], str]:
     """Подготовить перевод для карточки ревью; вернуть item/nlp/editing_text."""
     nlp = dict(nlp or {})
-    extra = dict(nlp.get("extra") or {}) if isinstance(nlp.get("extra"), Mapping) else {}
+    extra = (
+        dict(nlp.get("extra") or {}) if isinstance(nlp.get("extra"), Mapping) else {}
+    )
     source_text = get_item_text_context(item)
     editing_text = owner_editing_text(item, nlp)
     cached_editing = str(extra.get("owner_editing_text") or "").strip()
@@ -140,6 +157,8 @@ async def ensure_merged_owner_post(
     force: bool = False,
 ) -> str:
     """Собрать merged_text: по умолчанию саммари + почти сырой комментарий Owner."""
+    if is_title_only_summary_fallback(item, nlp):
+        return ""
     merged = str(nlp.get("merged_text") or "").strip()
     if merged and not force:
         return merged

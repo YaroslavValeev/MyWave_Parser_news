@@ -1,8 +1,52 @@
 from utils.item_context import (
     derive_item_title,
+    get_item_text_context,
     is_title_only_summary_fallback,
     missing_text_context_summary,
 )
+
+
+def test_link_without_article_text_is_not_nlp_context():
+    item = {"content": "https://wakeflot.ru/news/1785"}
+    assert get_item_text_context(item) == ""
+
+
+def test_real_transcript_is_used_when_content_only_contains_a_link():
+    item = {
+        "content": "https://wakeflot.ru/news/1785",
+        "transcript": "Консервация и зимнее хранение двигателей PCM.",
+    }
+    assert get_item_text_context(item) == item["transcript"]
+
+
+def test_source_text_with_a_link_remains_available():
+    content = "Консервация двигателей PCM: https://wakeflot.ru/news/1785"
+    assert get_item_text_context({"content": content}) == content
+
+
+def test_link_only_summary_is_untrusted_even_without_legacy_metadata():
+    item = {"content": "https://wakeflot.ru/news/1785"}
+    nlp = {"summary": "В Москве прошёл чемпионат России по вейкборду."}
+    assert is_title_only_summary_fallback(item, nlp) is True
+
+
+def test_missing_context_placeholder_cannot_become_a_publishable_summary():
+    item = {"title": "Wakeflot", "content": ""}
+    nlp = {
+        "summary": "В записи нет текстового контента в базе.",
+        "extra": {"source_context_missing": True},
+    }
+    assert is_title_only_summary_fallback(item, nlp) is True
+
+
+def test_explicit_owner_rewrite_is_preserved_for_link_only_source():
+    item = {"content": "https://wakeflot.ru/news/1785"}
+    nlp = {
+        "summary": "Подготовка двигателя PCM к зиме.",
+        "merged_text": "Проверенный автором текст.",
+        "extra": {"owner_rewritten": True, "source_context_missing": True},
+    }
+    assert is_title_only_summary_fallback(item, nlp) is False
 
 
 def test_derive_item_title_prefers_content_for_telegram_items():

@@ -1,4 +1,5 @@
 """Асинхронные операции обработки NLP-очереди."""
+
 from __future__ import annotations
 
 import logging
@@ -7,9 +8,9 @@ from typing import Iterable
 from config.settings import config
 from nlp.openai_client import OpenAIClient, get_openai_client
 from nlp.routing import DISCARD, PUBLISH, REVIEW, decide_route
-from nlp.sanitize import sanitize_text
 from storage.data import get_repository
 from storage.repository import AsyncNewsRepository
+from utils.item_context import get_item_text_context, missing_text_context_summary
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,19 +39,49 @@ async def process_nlp_queue(
     if not items:
         return 0
 
+    return await _process_items(
+        items, repository=repo, client=ai_client, lang=lang or config.NL_LANG
+    )
+
+
+async def _process_items(
+    items: Iterable[dict],
+    *,
+    repository: AsyncNewsRepository,
+    client: OpenAIClient,
+    lang: str,
+) -> int:
+    """Обработать переданные записи, не выбирая другие элементы общей очереди."""
+    repo = repository
+    ai_client = client
     processed = 0
-    target_lang = lang or config.NL_LANG
+    target_lang = lang
     for item in items:
         item_id = item["id"]
         try:
             await repo.update_status(item_id, STATUS_PROCESSING)
-            text = sanitize_text(item.get("content")) or sanitize_text(item.get("title"))
+            text = get_item_text_context(item)
             if not text:
-                text = ""
+                await repo.save_nlp_results(
+                    item_id,
+                    summary=missing_text_context_summary(item),
+                    questions=[],
+                    decision=REVIEW,
+                    extra={"sanitized_text": "", "source_context_missing": True},
+                )
+                await repo.update_status(item_id, REVIEW)
+                await repo.log_event(
+                    item_id,
+                    "warning",
+                    "nlp_skipped_missing_text_context",
+                    {"status": REVIEW},
+                )
+                processed += 1
+                continue
 
-            summary = await ai_client.summarize(text or "Без контента", lang=target_lang)
-            questions = await ai_client.gen_questions(text or summary, lang=target_lang)
-            moderation = await ai_client.moderate(text or summary)
+            summary = await ai_client.summarize(text, lang=target_lang)
+            questions = await ai_client.gen_questions(text, lang=target_lang)
+            moderation = await ai_client.moderate(text)
             decision = decide_route(summary, questions, moderation)
             extra_payload: dict[str, object] = {
                 "sanitized_text": text,
@@ -136,15 +167,14 @@ async def reprocess_items(
     ai_client = client or await get_openai_client()
     processed = 0
     target_lang = lang or config.NL_LANG
-    for item_id in item_ids:
+    for item_id in dict.fromkeys(item_ids):
         item = await repo.get_item(item_id)
         if not item:
             continue
-        await repo.update_status(item_id, "new")
-        processed += await process_nlp_queue(
+        processed += await _process_items(
+            [item],
             repository=repo,
             client=ai_client,
-            batch_size=1,
             lang=target_lang,
         )
     return processed
