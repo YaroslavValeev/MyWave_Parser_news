@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
@@ -8,6 +9,7 @@ from utils.card_preview_text import to_card_preview_text
 
 _TELEGRAM_HOSTS = {"t.me", "telegram.me"}
 _TITLE_PLACEHOLDERS = {"без заголовка", "(без заголовка)"}
+_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 
 
 def _normalize_candidate_title(value: object) -> str:
@@ -21,7 +23,7 @@ def get_item_text_context(item: Mapping[str, Any]) -> str:
     """Вернуть очищенный текстовый контекст материала только из реального контента."""
     for key in ("content", "transcript"):
         text = sanitize_text(item.get(key))
-        if text:
+        if any(char.isalnum() for char in _URL_RE.sub("", text)):
             return text
     return ""
 
@@ -62,7 +64,9 @@ def derive_item_title(item: Mapping[str, Any], *, max_len: int = 120) -> str:
     if title and not is_telegram_item(item):
         return to_card_preview_text(title, max_len=max_len) or title
 
-    text_title = derive_text_title(item.get("content") or item.get("transcript"), max_len=max_len)
+    text_title = derive_text_title(
+        item.get("content") or item.get("transcript"), max_len=max_len
+    )
     if text_title:
         return text_title
 
@@ -103,16 +107,21 @@ def is_title_only_summary_fallback(
     item: Mapping[str, Any],
     nlp: Mapping[str, Any] | None,
 ) -> bool:
-    """Определить старый NLP-fallback, где summary построено только по title без контента."""
+    """Определить саммари, построенное без текста по заголовку или одной ссылке."""
     if get_item_text_context(item):
         return False
     nlp = nlp or {}
+    extra = nlp.get("extra")
+    if isinstance(extra, Mapping) and extra.get("owner_rewritten") is True:
+        return False
+    if isinstance(extra, Mapping) and extra.get("source_context_missing") is True:
+        return True
+    raw_content = sanitize_text(item.get("content"))
+    if raw_content and _URL_RE.search(raw_content) and nlp.get("summary"):
+        return True
     if str(nlp.get("merged_text") or "").strip():
         return False
-    extra = nlp.get("extra")
     if not isinstance(extra, Mapping):
-        return False
-    if extra.get("owner_rewritten") is True:
         return False
     title = sanitize_text(item.get("title"))
     if not title:
