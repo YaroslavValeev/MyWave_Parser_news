@@ -5,6 +5,7 @@ import importlib
 import inspect
 import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -47,6 +48,28 @@ class OpenAISettings:
     whisper_model: str
     image_model: str
     default_language: str
+    text_reasoning_effort: str = "none"
+    text_max_completion_tokens: int = 1600
+    text_timeout_seconds: float = 90.0
+    text_max_retries: int = 1
+
+    def __post_init__(self) -> None:
+        if self.text_max_completion_tokens < 1 or self.text_timeout_seconds <= 0:
+            raise ValueError("Text output limit and timeout must be positive")
+        if not 0 <= self.text_max_retries <= 2:
+            raise ValueError("TEXT_MAX_RETRIES must be between 0 and 2")
+        if self.text_model.startswith("gpt-6"):
+            if self.text_model != "gpt-6-luna":
+                raise ValueError("This migration supports TEXT_MODEL=gpt-6-luna only")
+            if self.text_reasoning_effort not in {
+                "none",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+            }:
+                raise ValueError("Unsupported GPT-6 Luna reasoning effort")
 
     @classmethod
     def from_config(cls) -> "OpenAISettings":
@@ -56,6 +79,10 @@ class OpenAISettings:
             whisper_model=config.WHISPER_MODEL,
             image_model=config.IMAGE_MODEL,
             default_language=config.NL_LANG,
+            text_reasoning_effort=config.TEXT_REASONING_EFFORT,
+            text_max_completion_tokens=config.TEXT_MAX_COMPLETION_TOKENS,
+            text_timeout_seconds=config.TEXT_TIMEOUT_SECONDS,
+            text_max_retries=config.TEXT_MAX_RETRIES,
         )
 
 
@@ -105,11 +132,7 @@ class OpenAIClient:
             " Ответ верни списком с дефисами."
         ).format(n=n, lang=lang or self._settings.default_language)
         response = await self._chat_completion(prompt, text)
-        items = [
-            line.strip("-• \t ")
-            for line in response.splitlines()
-            if line.strip()
-        ]
+        items = [line.strip("-• \t ") for line in response.splitlines() if line.strip()]
         return [item for item in items if item]
 
     async def moderate(self, text: str) -> dict[str, Any]:
@@ -181,8 +204,16 @@ class OpenAIClient:
             n=1,
         )
         data = response.data[0]
-        url = getattr(data, "url", None) if not isinstance(data, dict) else data.get("url")
-        b64 = getattr(data, "b64_json", None) if not isinstance(data, dict) else data.get("b64_json")
+        url = (
+            getattr(data, "url", None)
+            if not isinstance(data, dict)
+            else data.get("url")
+        )
+        b64 = (
+            getattr(data, "b64_json", None)
+            if not isinstance(data, dict)
+            else data.get("b64_json")
+        )
         return {"url": url, "b64_json": b64}
 
     async def author_rewrite(
@@ -214,22 +245,51 @@ class OpenAIClient:
 
     async def _chat_completion(self, system_prompt: str, user_content: str) -> str:
         client = await self._ensure_client()
-        response = await client.chat.completions.create(
-            model=self._settings.text_model,
-            temperature=0.2,
-            messages=[
+        is_gpt6 = self._settings.text_model == "gpt-6-luna"
+        effort = self._settings.text_reasoning_effort if is_gpt6 else None
+        request: dict[str, Any] = {
+            "model": self._settings.text_model,
+            "max_completion_tokens": self._settings.text_max_completion_tokens,
+            "timeout": self._settings.text_timeout_seconds,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
+        }
+        if is_gpt6:
+            request["reasoning_effort"] = effort
+        if effort in {None, "none"}:
+            request["temperature"] = 0.2
+        started = time.monotonic()
+        async with asyncio.timeout(self._settings.text_timeout_seconds):
+            response = await client.with_options(
+                max_retries=self._settings.text_max_retries
+            ).chat.completions.create(**request)
+        if not response.choices:
+            raise RuntimeError("Text completion has no choices")
+        result = response.choices[0]
+        choice = result.message
+        if result.finish_reason != "stop" or getattr(choice, "refusal", None):
+            raise RuntimeError("Text completion refused or incomplete")
+        content = getattr(choice, "content", None)
+        if not isinstance(content, str) or not content.strip():
+            raise RuntimeError("Text completion has no text")
+        usage = response.usage
+        details = getattr(usage, "completion_tokens_details", None)
+        prompt_details = getattr(usage, "prompt_tokens_details", None)
+        LOGGER.info(
+            "text_completion_succeeded",
+            extra={
+                "text_model": self._settings.text_model,
+                "reasoning_effort": effort or "not_applicable",
+                "latency_ms": round((time.monotonic() - started) * 1000),
+                "input_tokens": getattr(usage, "prompt_tokens", None),
+                "output_tokens": getattr(usage, "completion_tokens", None),
+                "reasoning_tokens": getattr(details, "reasoning_tokens", None),
+                "cached_tokens": getattr(prompt_details, "cached_tokens", None),
+            },
         )
-        choice = response.choices[0].message
-        content = getattr(choice, "content", "")
-        if isinstance(content, list):
-            return "".join(
-                part.get("text", "") if isinstance(part, dict) else str(part)
-                for part in content
-            )
-        return str(content or "")
+        return content
 
     async def _ensure_client(self) -> "AsyncOpenAI":
         async with self._lock:
@@ -239,7 +299,9 @@ class OpenAIClient:
                 module = importlib.import_module("openai")
                 async_openai_cls = getattr(module, "AsyncOpenAI", None)
                 if async_openai_cls is None:
-                    raise RuntimeError("AsyncOpenAI class is unavailable in openai package")
+                    raise RuntimeError(
+                        "AsyncOpenAI class is unavailable in openai package"
+                    )
                 proxy = (
                     getattr(config, "OPENAI_HTTP_PROXY", None)
                     or os.getenv("OPENAI_HTTP_PROXY")

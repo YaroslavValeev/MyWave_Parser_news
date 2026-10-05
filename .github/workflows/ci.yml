@@ -146,4 +146,6 @@ jobs:
             tests/test_client_copy.py \
             tests/test_collect_report.py \
             tests/test_scheduler_lock.py \
+            tests/test_gpt6_text_migration.py \
+            tests/test_text_model_eval.py \
             tests/test_publication_service.py
