@@ -552,6 +552,9 @@ def build_review_card_html(
             max_len=summary_max,
         )
     summary_hidden = is_title_only_summary_fallback(item, nlp)
+    if summary_hidden:
+        summary_raw = ""
+        final_text = ""
 
     preview_title = derive_item_title(item, max_len=PUBLIC_TITLE_MAX_LEN)
     preview_body = final_text or str(raw_content or "")
@@ -592,6 +595,7 @@ def build_review_card_html(
         editorial_nlp = dict(nlp) if isinstance(nlp, Mapping) else {}
         if summary_hidden:
             editorial_nlp["summary"] = ""
+            editorial_nlp["merged_text"] = ""
         parts.append(format_telegram_editorial_html(hints_from_item(item, editorial_nlp)))
         parts.append(web_html_from_item(item, editorial_nlp))
         if audit_logs:
@@ -658,7 +662,7 @@ def build_review_card_html(
         elif summary_hidden:
             parts.append(
                 "\n\n<b>Саммари (NLP)</b>\n"
-                "<i>скрыто: в базе нет текстового контекста, а текущее саммари было построено только по заголовку. "
+                "<i>скрыто: в базе нет текстового контекста для проверки фактов. "
                 "Откройте «Источник» и при необходимости перегенерируйте материал вручную.</i>"
             )
         else:
@@ -1154,6 +1158,12 @@ async def handle_author_rewrite(repo: AsyncNewsRepository, query: CallbackQuery,
         await query.answer("Материал не найден", show_alert=True)
         return
     nlp = await repo.get_nlp_results(item_id) or {}
+    if is_title_only_summary_fallback(item, nlp):
+        await query.answer(
+            "В базе нет текста источника для проверки фактов. Сначала добавьте исходный текст материала.",
+            show_alert=True,
+        )
+        return
     item, nlp, _editing_text = await ensure_owner_editing_context(item, nlp)
     source_text = owner_editing_text(item, nlp) or str(item.get("content") or "").strip()
     summary = str(nlp.get("summary") or "").strip()
