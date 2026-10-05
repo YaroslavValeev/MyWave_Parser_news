@@ -146,4 +146,5 @@ jobs:
             tests/test_client_copy.py \
             tests/test_collect_report.py \
             tests/test_scheduler_lock.py \
+            tests/test_server_preflight.py \
             tests/test_publication_service.py
