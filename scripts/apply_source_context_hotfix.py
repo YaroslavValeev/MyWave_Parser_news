@@ -58,6 +58,34 @@ def emit(**values):
     print(json.dumps(values, ensure_ascii=False), flush=True)
 
 
+def error_details(exc):
+    """Expose only our static guard codes, never arbitrary exception messages."""
+    safe = {
+        "run_as_root_on_server",
+        "service_directory_changed",
+        "backup_root_mismatch",
+        "audited_configuration_changed",
+        "target_record_missing",
+        "target_status_changed",
+        "target_source_changed",
+        "target_transcript_changed",
+        "target_owner_rewrite_changed",
+        "unexpected_patch_context",
+        "sqlite_check_failed",
+        "source_guard_failed",
+        "card_guard_failed",
+        "service_pid_missing",
+        "service_restarted_during_check",
+        "owner_notes_changed",
+        "owner_voice_changed",
+    }
+    safe.update("server_file_changed:" + name for name in EXPECTED)
+    result = {"error_type": type(exc).__name__}
+    if isinstance(exc, RuntimeError) and str(exc) in safe:
+        result["check"] = str(exc)
+    return result
+
+
 def blob(raw):
     return hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
 
@@ -206,9 +234,32 @@ def restore_code(root, backup):
         install_file(root / name, (backup / "code" / name).read_bytes())
 
 
+def smoke_runtime():
+    from telegram_bot.views import build_review_card_html
+    from utils.item_context import get_item_text_context
+
+    if get_item_text_context({"content": "https://wakeflot.ru/news/1785"}):
+        raise RuntimeError("source_guard_failed")
+    card = build_review_card_html(
+        {
+            "title": "Wakeflot",
+            "content": "https://wakeflot.ru/news/1785",
+            "link": "https://t.me/Wakeflot/3048",
+        },
+        {"summary": "Чемпионат 2023", "merged_text": "Чемпионат 2023"},
+    )
+    if "Чемпионат 2023" in card:
+        raise RuntimeError("card_guard_failed")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--code-only",
+        action="store_true",
+        help="Deploy the code guard without repairing item 649",
+    )
     parser.add_argument("--rollback-code", type=Path)
     args = parser.parse_args()
     if not hasattr(os, "geteuid") or os.geteuid() != 0:
@@ -230,7 +281,9 @@ def main():
         verify_files(ROOT, manifest["after"])
         service("stop")
         restore_code(ROOT, backup)
-        emit(code_rollback="ok", item_649_redaction="retained", pid=start_and_check())
+        emit(
+            code_rollback="ok", database_restore="not_performed", pid=start_and_check()
+        )
         return
 
     from config.settings import config
@@ -242,7 +295,11 @@ def main():
     service("is-active", "--quiet")
     db = open_db(db_path)
     try:
-        target_rows(db)
+        if args.code_only:
+            if db.execute("PRAGMA quick_check(1)").fetchone()[0] != "ok":
+                raise RuntimeError("sqlite_check_failed")
+        else:
+            target_rows(db)
     finally:
         db.close()
     patch = subprocess.check_output(
@@ -251,7 +308,13 @@ def main():
     )
     with tempfile.TemporaryDirectory(prefix="mywave-context-stage-") as directory:
         prepared = prepare_code(ROOT, Path(directory), patch)
-    emit(patch_check="ok", files=list(FILES), item_id=649, text_model=config.TEXT_MODEL)
+    emit(
+        patch_check="ok",
+        files=list(FILES),
+        item_id=649,
+        text_model=config.TEXT_MODEL,
+        data_repair="skipped" if args.code_only else "planned",
+    )
     if not args.apply:
         return
 
@@ -281,7 +344,8 @@ def main():
         db = open_db(db_path)
         snapshot = sqlite3.connect(backup / "data.sqlite")
         try:
-            target_rows(db)
+            if not args.code_only:
+                target_rows(db)
             db.backup(snapshot)
         finally:
             snapshot.close()
@@ -289,35 +353,24 @@ def main():
         for name, raw in prepared.items():
             install_file(ROOT / name, raw)
         verify_files(ROOT, manifest["after"])
-        from telegram_bot.views import build_review_card_html
-        from utils.item_context import get_item_text_context
-
-        if get_item_text_context({"content": "https://wakeflot.ru/news/1785"}):
-            raise RuntimeError("source_guard_failed")
-        card = build_review_card_html(
-            {
-                "title": "Wakeflot",
-                "content": "https://wakeflot.ru/news/1785",
-                "link": "https://t.me/Wakeflot/3048",
-            },
-            {"summary": "Чемпионат 2023", "merged_text": "Чемпионат 2023"},
-        )
-        if "Чемпионат 2023" in card:
-            raise RuntimeError("card_guard_failed")
-        repair_record(db_path)
-        repaired = True
+        smoke_runtime()
+        if not args.code_only:
+            repair_record(db_path)
+            repaired = True
         pid = start_and_check()
         emit(
             deploy="ok",
             item_id=649,
-            status="review",
-            source_context_missing=True,
+            data_repair="skipped" if args.code_only else "completed",
+            **(
+                {"status": "review", "source_context_missing": True} if repaired else {}
+            ),
             pid=pid,
             text_model=config.TEXT_MODEL,
             rollback_command=f"venv/bin/python -B {backup}/deploy.py --rollback-code {backup}",
         )
     except BaseException as exc:
-        emit(deploy="failed", error_type=type(exc).__name__)
+        emit(deploy="failed", **error_details(exc))
         if stopped:
             service("stop")
             restore_code(ROOT, backup)
@@ -333,5 +386,5 @@ if __name__ == "__main__":
     try:
         main()
     except BaseException as exc:
-        emit(error_type=type(exc).__name__)
+        emit(**error_details(exc))
         sys.exit(1)

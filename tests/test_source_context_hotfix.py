@@ -160,15 +160,18 @@ def test_repair_rejects_new_source_text_without_database_changes(tmp_path):
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
 
 
-def test_mid_install_failure_restores_code_and_restarts_only_target_service(
-    tmp_path, monkeypatch
-):
+@pytest.mark.parametrize("scenario", ["repair_fail", "code_fail", "code_success"])
+def test_deploy_data_scope_and_recovery(tmp_path, monkeypatch, capsys, scenario):
     from config.settings import config
 
     root = tmp_path / "server"
     root.mkdir()
     db_path = root / "data.db"
     make_database(db_path)
+    code_only = scenario != "repair_fail"
+    if code_only:
+        with sqlite3.connect(db_path) as db:
+            db.execute("UPDATE items SET status='published' WHERE id=649")
     before_db = db_path.read_bytes()
     before = {}
     patch = []
@@ -214,7 +217,7 @@ def test_mid_install_failure_restores_code_and_restarts_only_target_service(
     def fail_second_install(path, raw, metadata=None):
         nonlocal installed
         installed += 1
-        if installed == 2:
+        if installed == 2 and scenario != "code_success":
             raise RuntimeError("simulated_disk_failure")
         return original_install(path, raw, metadata)
 
@@ -226,7 +229,9 @@ def test_mid_install_failure_restores_code_and_restarts_only_target_service(
     monkeypatch.setattr(HOTFIX.os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setattr(config, "DB_PATH", str(db_path))
     monkeypatch.setattr(config, "TEXT_MODEL", "gpt-4o-mini")
-    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--apply"])
+    monkeypatch.setattr(
+        sys, "argv", [str(SCRIPT), "--apply"] + (["--code-only"] if code_only else [])
+    )
     monkeypatch.setattr(sys, "path", list(sys.path))
     monkeypatch.setattr(
         HOTFIX.subprocess,
@@ -236,14 +241,48 @@ def test_mid_install_failure_restores_code_and_restarts_only_target_service(
     monkeypatch.setattr(HOTFIX, "service", fake_service)
     monkeypatch.setattr(HOTFIX.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(HOTFIX, "install_file", fail_second_install)
-    with pytest.raises(RuntimeError, match="simulated_disk_failure"):
+
+    if code_only:
+
+        def reject_data_operation(*args):
+            raise AssertionError("code_only_must_not_validate_or_repair_target")
+
+        monkeypatch.setattr(HOTFIX, "target_rows", reject_data_operation)
+        monkeypatch.setattr(HOTFIX, "repair_record", reject_data_operation)
+    smoke_calls = []
+    monkeypatch.setattr(HOTFIX, "smoke_runtime", lambda: smoke_calls.append(True))
+
+    if scenario == "code_success":
         HOTFIX.main()
+        assert smoke_calls == [True]
+        output = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        final = next(row for row in output if row.get("deploy") == "ok")
+        assert final["data_repair"] == "skipped" and "status" not in final
+    else:
+        with pytest.raises(RuntimeError, match="simulated_disk_failure"):
+            HOTFIX.main()
     assert active and calls.count(("start",)) == 1
-    assert calls.count(("stop",)) == 2
+    assert calls.count(("stop",)) == (1 if scenario == "code_success" else 2)
     for name, raw in before.items():
-        assert (root / name).read_bytes() == raw
+        expected = (
+            raw.replace(b"value = 1", b"value = 2")
+            if scenario == "code_success"
+            else raw
+        )
+        assert (root / name).read_bytes() == expected
     assert db_path.read_bytes() == before_db
     assert (
         len(list((root.parent / "backups").glob("source-context-649-*/data.sqlite")))
         == 1
     )
+
+
+@pytest.mark.parametrize("message", ["target_status_changed", "secret-marker-token"])
+def test_error_output_exposes_guard_codes_but_hides_arbitrary_messages(message):
+    output = HOTFIX.error_details(RuntimeError(message))
+    assert output["error_type"] == "RuntimeError"
+    assert "secret-marker" not in json.dumps(output)
+    if message == "target_status_changed":
+        assert output["check"] == message
+    else:
+        assert "check" not in output
