@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 from typing import Iterable
 
 from config.settings import config
@@ -11,6 +12,7 @@ from nlp.routing import DISCARD, PUBLISH, REVIEW, decide_route
 from storage.data import get_repository
 from storage.repository import AsyncNewsRepository
 from utils.item_context import get_item_text_context, missing_text_context_summary
+from utils.source_context import linked_article_context, source_input_hash
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,9 +60,41 @@ async def _process_items(
     target_lang = lang
     for item in items:
         item_id = item["id"]
+        if item.get("status") in {"discarded", "published"}:
+            continue
         try:
-            await repo.update_status(item_id, STATUS_PROCESSING)
+            if not await repo.begin_nlp_processing(item):
+                continue
             text = get_item_text_context(item)
+            if not text and getattr(config, "SOURCE_ARTICLE_FETCH_ENABLED", False):
+                from services.source_article import ArticleFetchError, retrieve_article
+
+                try:
+                    evidence = await retrieve_article(
+                        item, set(config.SOURCE_ARTICLE_ALLOWED_HOSTS)
+                    )
+                    await repo.save_source_context(item_id, evidence)
+                    item = {**item, "source_context": evidence}
+                    text = get_item_text_context(item)
+                    await repo.log_event(
+                        item_id,
+                        "info",
+                        "source_article_fetched",
+                        {"text_sha256": evidence["text_sha256"], "chars": len(text)},
+                    )
+                except ArticleFetchError as fetch_error:
+                    await repo.log_event(
+                        item_id,
+                        "warning",
+                        "source_article_fetch_refused",
+                        {"reason": str(fetch_error)},
+                    )
+                except ValueError:
+                    await repo.restore_source_review(item_id)
+                    await repo.log_event(
+                        item_id, "warning", "source_article_save_refused"
+                    )
+                    continue
             if not text:
                 await repo.save_nlp_results(
                     item_id,
@@ -68,8 +102,9 @@ async def _process_items(
                     questions=[],
                     decision=REVIEW,
                     extra={"sanitized_text": "", "source_context_missing": True},
+                    expected_source_hash=source_input_hash(item),
+                    item_status=REVIEW,
                 )
-                await repo.update_status(item_id, REVIEW)
                 await repo.log_event(
                     item_id,
                     "warning",
@@ -85,7 +120,12 @@ async def _process_items(
             decision = decide_route(summary, questions, moderation)
             extra_payload: dict[str, object] = {
                 "sanitized_text": text,
+                "source_input_sha256": source_input_hash(item),
+                "source_text_sha256": hashlib.sha256(text.encode()).hexdigest(),
             }
+            evidence = linked_article_context(item)
+            if evidence:
+                extra_payload["source_article_url"] = evidence["final_url"]
             try:
                 from services.semantic_dedup import maybe_attach_event_id
 
@@ -120,6 +160,7 @@ async def _process_items(
                             },
                         )
 
+            new_status = STATUS_MAP.get(decision, REVIEW)
             await repo.save_nlp_results(
                 item_id,
                 summary=summary,
@@ -127,9 +168,9 @@ async def _process_items(
                 decision=decision,
                 moderation=moderation,
                 extra=extra_payload,
+                expected_source_hash=source_input_hash(item),
+                item_status=new_status,
             )
-            new_status = STATUS_MAP.get(decision, REVIEW)
-            await repo.update_status(item_id, new_status)
             await repo.log_event(
                 item_id,
                 "info",
@@ -140,8 +181,16 @@ async def _process_items(
                 },
             )
             processed += 1
+        except ValueError as exc:
+            await repo.restore_source_review(item_id)
+            await repo.log_event(
+                item_id,
+                "warning",
+                "nlp_result_refused",
+                {"error_type": type(exc).__name__},
+            )
         except Exception as exc:  # noqa: BLE001
-            await repo.update_status(item_id, STATUS_ERROR)
+            await repo.fail_nlp_processing(item_id)
             await repo.log_event(
                 item_id,
                 "error",

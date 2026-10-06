@@ -53,6 +53,11 @@ class Config:
     # HTTP(S) прокси для OpenAI API (Timeweb/РФ: без прокси часто 403 unsupported_country)
     OPENAI_HTTP_PROXY = (os.getenv("OPENAI_HTTP_PROXY") or os.getenv("HTTP_OPENAI_PROXY") or "").strip() or None
     TEXT_MODEL = os.getenv("TEXT_MODEL", "gpt-4o-mini")
+    SOURCE_ARTICLE_FETCH_ENABLED = os.getenv("SOURCE_ARTICLE_FETCH_ENABLED", "false").lower() == "true"
+    SOURCE_ARTICLE_ALLOWED_HOSTS = tuple(
+        value.strip().lower() for value in os.getenv("SOURCE_ARTICLE_ALLOWED_HOSTS", "").split(",")
+        if value.strip()
+    )
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "whisper-1")
     IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-1")
     NL_LANG = os.getenv("NL_LANG", "ru")
