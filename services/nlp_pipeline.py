@@ -144,7 +144,7 @@ async def _process_items(
                         "warning",
                         "cover_generation_failed",
                         {
-                            "error": str(cover_error),
+                            "error_type": type(cover_error).__name__,
                         },
                     )
                 else:
@@ -196,10 +196,13 @@ async def _process_items(
                 "error",
                 "nlp_processing_failed",
                 {
-                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "http_status": getattr(exc, "status_code", None),
                 },
             )
-            LOGGER.exception("Failed to process item %s", item_id)
+            LOGGER.error(
+                "Failed to process item %s (error_type=%s)", item_id, type(exc).__name__
+            )
     return processed
 
 
