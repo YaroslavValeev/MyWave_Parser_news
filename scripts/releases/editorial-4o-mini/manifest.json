@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "source_ref": "30df7caf107086c217ceeb1fc50a48e0e9a93720",
+  "server_reference": "e729fdb423402320a502aff0e6288ca9f57ffc46",
+  "before": {
+    "config/settings.py": "b94a1cac4cf46fa7022ea1ba95abc3b12d3b30a55bdd062296e8533a50f904c3",
+    "nlp/openai_client.py": "be01d5f90e2279b15f993ca81c16ed671a73120025bd4456a8c27e770a8fc9d9",
+    "services/nlp_pipeline.py": "fce509e0d9d42e841761e6a15d3a95434ff3c69fff86aebb140b942869ada2f1",
+    "storage/repository.py": "8d4ee97a437b941cef829abe2b890f9e95c3c850d87d92db449c2eeb85f91bdd",
+    "utils/item_context.py": "fa7fbc297b3e84822b8fd4a04141b276334d272adca7927d176232adcf8fbed0",
+    "services/publication.py": "549622a9deb0d28cef2c25b172d04f706048bc5ceb30922509dc3fd6daaf7df0"
+  },
+  "after": {
+    "config/settings.py": "c4a0b5cb88785b830fcbccda01d6d882a494c9c17d91e4fe05106f2ed3602d20",
+    "nlp/openai_client.py": "2427114d491ee170168309c02116d32879da4277b04799b11eb1ef0d79861e1c",
+    "services/nlp_pipeline.py": "e59a4e2f429c964c85139bbccf30beb577c65a59955bcf73e07f0854d4c78653",
+    "storage/repository.py": "de7a3c07ca1b4a12ca1b88822fdc4ec95c6b94d515d331a37cc5737e819baea9",
+    "utils/item_context.py": "92e155acd8ba2c82bc8e705934629802a3fafb5ffad89475babcb76e4abc96a3",
+    "services/publication.py": "9af5fa2a93f99c1e6d92a485840298cfa7a6ece3ec1978270ce9521c9f7a2cd4",
+    "services/source_article.py": "0f5a982fe61dad48c45221b53d766712b5a7ba8128510122abef89bde4685e9b",
+    "utils/source_context.py": "d6aa49aa8487f73a2345ebbe731eb43a72c9b63b7dd84f55b22b71cf33112382",
+    "storage/migrations/004_source_context.sql": "77d6eea365f2e00ae47b5c97c066137915371f5ed224f34557d5e5059b7ed71c",
+    "scripts/probe_source_article.py": "bb6117a4b64bab95176435aece92862d52197f98c437096771173bc1f486343b",
+    "scripts/editorial_offline_smoke.py": "f34c145e31dab1050437928905aeab47bbcbaa21714237163b2fd13749b9ee16"
+  },
+  "guard": {
+    "telegram_bot/views.py": "56e0fc0d96def21b762de0a31609903ed18eace3bfa1099b520ec042e7af38b3",
+    "utils/owner_content.py": "9acf8234f1a051a293d72d4ddba53b4096021b18da759e520d2f8cf217f7ccfc",
+    "telegram_bot/router.py": "4809bfec8d9e3712e5b81ce97cb0c870f9b9053cf0676250b6f0954af7b05158",
+    "utils/safe_http.py": "d493c74b0efb5fdfefe557c7848e7751569de3c6798b3eb0c995f93c9fec5f8c",
+    "utils/russian_summary.py": "b96d596f2c6e52ca79d7feec0b37d3af38c3fa922c4b28e2ed880da7a637b1ba"
+  },
+  "patch_sha256": "796f8a43def2119949e2428eecaf4317110b09000187de132dda9f2e2d107cf6"
+}
