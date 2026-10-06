@@ -27,7 +27,9 @@ async def test_summarize_prompts_for_strict_russian_translation():
 
     client._chat_completion = fake_chat  # type: ignore[method-assign]
 
-    result = await client.summarize("Wakeboarding Magazine covers the latest news.", lang="ru")
+    result = await client.summarize(
+        "Wakeboarding Magazine covers the latest news.", lang="ru"
+    )
 
     assert result == "Русское саммари"
     assert "строго на русском языке" in captured["system"]
@@ -36,7 +38,7 @@ async def test_summarize_prompts_for_strict_russian_translation():
 
 
 @pytest.mark.asyncio
-async def test_summarize_forces_russian_fallback_for_english_response():
+async def test_summarize_rejects_failed_translation_without_fabricated_fallback():
     client = _client()
 
     async def fake_chat(system_prompt: str, user_content: str) -> str:
@@ -44,10 +46,10 @@ async def test_summarize_forces_russian_fallback_for_english_response():
 
     client._chat_completion = fake_chat  # type: ignore[method-assign]
 
-    result = await client.summarize("Wakeboarding Magazine covers the latest news.", lang="ru")
-
-    assert "Wakeboarding Magazine covers" not in result
-    assert any(ch in result.lower() for ch in "абвгдежзийклмнопрстуфхцчшщьыэюя")
+    with pytest.raises(ValueError, match="language_mismatch"):
+        await client.summarize(
+            "Wakeboarding Magazine covers the latest news.", lang="ru"
+        )
 
 
 @pytest.mark.asyncio
@@ -68,7 +70,9 @@ async def test_transcribe_falls_back_to_whisper_1_on_model_not_found(tmp_path):
     class FakeAudio:
         class transcriptions:
             @staticmethod
-            async def create(*, model: str, file, language: str, response_format: str) -> str:
+            async def create(
+                *, model: str, file, language: str, response_format: str
+            ) -> str:
                 calls.append(model)
                 if model != "whisper-1":
                     raise ModelNotFoundError()
@@ -109,5 +113,8 @@ async def test_author_rewrite_uses_original_text_and_notes():
     assert "Original source text about the event." in captured["user"]
     assert "Краткое саммари" in captured["user"]
     assert "Добавь моё мнение про участие в старте." in captured["user"]
-    assert "личный пост автора" in captured["system"] or "от лица автора канала" in captured["system"]
+    assert (
+        "личный пост автора" in captured["system"]
+        or "от лица автора канала" in captured["system"]
+    )
     assert "Личная заметка" in captured["system"]

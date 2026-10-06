@@ -150,4 +150,8 @@ jobs:
             tests/test_source_context_hotfix.py \
             tests/test_discarded_nlp_repair.py \
             tests/test_source_article.py \
+            tests/test_openai_client.py \
+            tests/test_openai_text_reliability.py \
+            tests/test_openai_skip_moderation.py \
+            tests/test_editorial_flow_offline.py \
             tests/test_publication_service.py

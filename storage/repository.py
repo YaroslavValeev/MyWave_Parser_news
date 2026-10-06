@@ -499,8 +499,8 @@ class AsyncNewsRepository:
                     moderation = excluded.moderation,
                     extra = excluded.extra,
                     merged_text = excluded.merged_text,
-                    voice_file = excluded.voice_file,
-                    rewrite_guidance = excluded.rewrite_guidance,
+                    voice_file = CASE WHEN ? THEN nlp_results.voice_file ELSE excluded.voice_file END,
+                    rewrite_guidance = CASE WHEN ? THEN nlp_results.rewrite_guidance ELSE excluded.rewrite_guidance END,
                     updated_at = excluded.updated_at,
                     version = version + 1
                 """,
@@ -515,6 +515,8 @@ class AsyncNewsRepository:
                     voice_file,
                     rewrite_guidance,
                     now,
+                    expected_source_hash is not None,
+                    expected_source_hash is not None,
                 ),
             )
             if item_status is not None:
