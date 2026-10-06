@@ -148,4 +148,5 @@ jobs:
             tests/test_scheduler_lock.py \
             tests/test_server_preflight.py \
             tests/test_source_context_hotfix.py \
+            tests/test_discarded_nlp_repair.py \
             tests/test_publication_service.py
