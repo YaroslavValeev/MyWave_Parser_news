@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from nlp.sanitize import sanitize_text
 from utils.card_preview_text import to_card_preview_text
+from utils.source_context import linked_article_context, source_input_hash
 
 _TELEGRAM_HOSTS = {"t.me", "telegram.me"}
 _TITLE_PLACEHOLDERS = {"без заголовка", "(без заголовка)"}
@@ -25,7 +26,8 @@ def get_item_text_context(item: Mapping[str, Any]) -> str:
         text = sanitize_text(item.get(key))
         if any(char.isalnum() for char in _URL_RE.sub("", text)):
             return text
-    return ""
+    evidence = linked_article_context(item)
+    return evidence["text"] if evidence else ""
 
 
 def is_telegram_item(item: Mapping[str, Any]) -> bool:
@@ -60,6 +62,9 @@ def derive_text_title(text: object, *, max_len: int = 120) -> str:
 
 def derive_item_title(item: Mapping[str, Any], *, max_len: int = 120) -> str:
     """Осмысленный заголовок для показа в UI/публикации."""
+    evidence = linked_article_context(item)
+    if evidence and evidence.get("title"):
+        return to_card_preview_text(evidence["title"], max_len=max_len)
     title = _normalize_candidate_title(item.get("title"))
     if title and not is_telegram_item(item):
         return to_card_preview_text(title, max_len=max_len) or title
@@ -108,10 +113,19 @@ def is_title_only_summary_fallback(
     nlp: Mapping[str, Any] | None,
 ) -> bool:
     """Определить саммари, построенное без текста по заголовку или одной ссылке."""
-    if get_item_text_context(item):
-        return False
     nlp = nlp or {}
     extra = nlp.get("extra")
+    evidence = linked_article_context(item)
+    if isinstance(extra, Mapping) and extra.get("source_input_sha256"):
+        if extra["source_input_sha256"] != source_input_hash(item):
+            return True
+    if evidence and (
+        not isinstance(extra, Mapping)
+        or extra.get("source_text_sha256") != evidence["text_sha256"]
+    ):
+        return True
+    if get_item_text_context(item):
+        return False
     if isinstance(extra, Mapping) and extra.get("owner_rewritten") is True:
         return False
     if isinstance(extra, Mapping) and extra.get("source_context_missing") is True:

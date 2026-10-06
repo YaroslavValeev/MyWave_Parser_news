@@ -14,6 +14,7 @@ import aiosqlite
 
 from utils.row_utils import generate_checksum
 from utils.item_freshness import is_item_stale_for_review, review_max_age_days
+from utils.source_context import linked_article_context, source_input_hash
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 SCHEMA_VERSION_TABLE = "schema_migrations"
@@ -396,6 +397,47 @@ class AsyncNewsRepository:
             )
             await db.commit()
 
+    async def restore_source_review(self, item_id: int) -> None:
+        """Return a refused enrichment to review without overriding an Owner decision."""
+        async with self._connection() as db:
+            await db.execute("UPDATE items SET status='review' WHERE id=? AND status='processing'", (item_id,))
+            await db.commit()
+
+    async def begin_nlp_processing(self, item: Mapping[str, Any]) -> bool:
+        """Claim unchanged source input without overriding a terminal Owner decision."""
+        async with self._connection() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (await db.execute("SELECT * FROM items WHERE id=?", (item["id"],))).fetchone()
+            if row is None or row["status"] in {"discarded", "published"}:
+                return False
+            if source_input_hash(dict(row)) != source_input_hash(item):
+                return False
+            await db.execute("UPDATE items SET status='processing' WHERE id=?", (item["id"],))
+            await db.commit()
+            return True
+
+    async def fail_nlp_processing(self, item_id: int) -> None:
+        async with self._connection() as db:
+            await db.execute("UPDATE items SET status='error' WHERE id=? AND status='processing'", (item_id,))
+            await db.commit()
+
+    async def save_source_context(self, item_id: int, evidence: Mapping[str, Any]) -> None:
+        """Save bound source evidence without rewriting the original post or media."""
+        async with self._connection() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (await db.execute("SELECT * FROM items WHERE id=?", (item_id,))).fetchone()
+            if row is None or row["status"] in {"discarded", "published"}:
+                raise ValueError("source_context_item_unavailable")
+            item = dict(row)
+            if source_input_hash(item) != evidence.get("input_sha256"):
+                raise ValueError("source_context_input_changed")
+            item["source_context"] = dict(evidence)
+            if linked_article_context(item) is None:
+                raise ValueError("source_context_invalid")
+            await db.execute("UPDATE items SET source_context=? WHERE id=?",
+                             (json.dumps(dict(evidence), ensure_ascii=False), item_id))
+            await db.commit()
+
     async def requeue_error_to_new(self, *, limit: int) -> int:
         """Перевести до ``limit`` записей из status=error в new (повторный прогон NLP)."""
         lim = max(1, min(int(limit), 500))
@@ -425,6 +467,8 @@ class AsyncNewsRepository:
         merged_text: str | None = None,
         voice_file: str | None = None,
         rewrite_guidance: str | None = None,
+        expected_source_hash: str | None = None,
+        item_status: str | None = None,
         **kwargs: Any,
     ) -> None:
         q_json = json.dumps(questions, ensure_ascii=False) if questions is not None else None
@@ -437,6 +481,11 @@ class AsyncNewsRepository:
             mod_str = json.dumps(moderation, ensure_ascii=False)
         now = datetime.now(timezone.utc).isoformat()
         async with self._connection() as db:
+            if expected_source_hash is not None:
+                await db.execute("BEGIN IMMEDIATE")
+                row = await (await db.execute("SELECT * FROM items WHERE id=?", (item_id,))).fetchone()
+                if row is None or row["status"] != "processing" or source_input_hash(dict(row)) != expected_source_hash:
+                    raise ValueError("nlp_source_or_status_changed")
             await db.execute(
                 """
                 INSERT INTO nlp_results (
@@ -468,6 +517,8 @@ class AsyncNewsRepository:
                     now,
                 ),
             )
+            if item_status is not None:
+                await db.execute("UPDATE items SET status=? WHERE id=?", (item_status, item_id))
             await db.commit()
 
     async def get_nlp_results(self, item_id: int) -> Optional[dict[str, Any]]:
