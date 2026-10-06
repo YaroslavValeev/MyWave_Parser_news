@@ -128,7 +128,7 @@ async def test_api_failure_has_bounded_retries_and_no_text_model_switch(
 
 
 @pytest.mark.asyncio
-async def test_total_deadline_stops_sdk_retry_wait():
+async def test_total_deadline_bounds_initial_request_and_retry_wait():
     calls = []
 
     def handler(request):
@@ -145,7 +145,9 @@ async def test_total_deadline_stops_sdk_retry_wait():
             await OpenAIClient(
                 settings(text_timeout_seconds=0.02), client=sdk
             )._chat_completion("s", "u")
-    assert len(calls) == 1
+    # On a busy runner the deadline can expire during initial SDK serialization.
+    # Both cases must time out without sending the configured retry.
+    assert len(calls) <= 1
 
 
 @pytest.mark.parametrize(
