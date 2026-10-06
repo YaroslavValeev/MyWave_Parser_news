@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+
 from services import source_article
 from services.nlp_pipeline import reprocess_items
 from storage.repository import AsyncNewsRepository, initialize_database
@@ -284,3 +285,32 @@ async def test_owner_rejection_during_processing_is_preserved(
     assert await reprocess_items([selected], repository=repo, client=client) == 0
     assert (await repo.get_item(selected))["status"] == "discarded"
     assert await repo.get_nlp_results(selected) is None
+
+
+def test_query_cannot_select_another_article(monkeypatch):
+    url = "https://news.example.test/news?id=1785"
+    other = "https://news.example.test/news?id=9999"
+    monkeypatch.setattr(
+        source_article.socket,
+        "getaddrinfo",
+        lambda *args: [(2, 1, 6, "", ("93.184.216.34", 443))],
+    )
+    with pytest.raises(
+        source_article.ArticleFetchError, match="redirect_source_changed"
+    ):
+        source_article._check_url(other, url, {"news.example.test"})
+    html = (
+        '<link rel="canonical" href="'
+        + other
+        + '"><h1>PCM</h1><article>'
+        + TEXT
+        + "</article>"
+    )
+    with pytest.raises(
+        source_article.ArticleFetchError, match="canonical_source_changed"
+    ):
+        source_article.extract_article(html, url)
+    value = {"id": 1, "content": url, "link": url}
+    bound = evidence(value)
+    bound.update(requested_url=url, final_url=other)
+    assert linked_article_context({**value, "source_context": bound}) is None

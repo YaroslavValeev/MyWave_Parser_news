@@ -69,9 +69,11 @@ def linked_article_context(item: Mapping[str, Any]) -> dict[str, Any] | None:
         final = urlsplit(normalized_article_url(str(evidence.get("final_url") or "")))
     except ValueError:
         return None
-    if requested.hostname != final.hostname or requested.path.rstrip(
-        "/"
-    ) != final.path.rstrip("/"):
+    if (
+        requested.hostname != final.hostname
+        or requested.path.rstrip("/") != final.path.rstrip("/")
+        or requested.query != final.query
+    ):
         return None
     if requested.scheme == "https" and final.scheme != "https":
         return None

@@ -45,9 +45,11 @@ def _check_url(url, original, allowed_hosts):
         raise ArticleFetchError("unsupported_url") from exc
     if parsed.hostname not in allowed_hosts:
         raise ArticleFetchError("host_not_allowed")
-    if parsed.hostname != first.hostname or parsed.path.rstrip(
-        "/"
-    ) != first.path.rstrip("/"):
+    if (
+        parsed.hostname != first.hostname
+        or parsed.path.rstrip("/") != first.path.rstrip("/")
+        or parsed.query != first.query
+    ):
         raise ArticleFetchError("redirect_source_changed")
     if first.scheme == "https" and parsed.scheme != "https":
         raise ArticleFetchError("https_downgrade")
@@ -68,9 +70,11 @@ def extract_article(html, final_url):
     if canonical and canonical.get("href"):
         target = urlsplit(urljoin(final_url, canonical["href"]))
         final = urlsplit(final_url)
-        if target.hostname != final.hostname or target.path.rstrip(
-            "/"
-        ) != final.path.rstrip("/"):
+        if (
+            target.hostname != final.hostname
+            or target.path.rstrip("/") != final.path.rstrip("/")
+            or target.query != final.query
+        ):
             raise ArticleFetchError("canonical_source_changed")
     headings = soup.select("h1")
     if len(headings) != 1:
@@ -104,9 +108,11 @@ def extract_article(html, final_url):
                     urlsplit(urljoin(final_url, entity)),
                     urlsplit(final_url),
                 )
-                if source.hostname != final.hostname or source.path.rstrip(
-                    "/"
-                ) != final.path.rstrip("/"):
+                if (
+                    source.hostname != final.hostname
+                    or source.path.rstrip("/") != final.path.rstrip("/")
+                    or source.query != final.query
+                ):
                     raise ArticleFetchError("structured_source_changed")
     for node in body.select(
         "script,style,nav,aside,footer,form,.related,.related-posts,.recommendations"
