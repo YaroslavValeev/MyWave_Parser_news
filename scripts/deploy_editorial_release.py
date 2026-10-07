@@ -13,7 +13,6 @@ import logging
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import sqlite3
 import subprocess
@@ -26,7 +25,7 @@ from urllib.request import urlopen
 ROOT = Path("/opt/bot3/parser-new-bot")
 BACKUPS = Path("/opt/bot3/backups")
 SERVICE = "parser-news-bot"
-MANIFEST_SHA256 = "f11778edc239aecb4d562b954a41e82491b9b180ab4afb702ebfb30a13a60139"
+MANIFEST_SHA256 = "dcaab37d071e3a30c70bb0438bfd34afb79c4aba38ac95a1966386527996f327"
 SAFE_ERRORS = {
     "unsafe_release_path",
     "release_artifact_hash_mismatch",
@@ -59,14 +58,59 @@ def lf(raw):
     return raw.replace(b"\r\n", b"\n")
 
 
+def child_progress(output):
+    """Read only our fixed progress fields, never arbitrary subprocess output."""
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
+    phases = {
+        "imports",
+        "imports_complete",
+        "database",
+        "nlp",
+        "owner_comment",
+        "owner_approval",
+        "publication",
+    }
+    last = None
+    for line in str(output or "").splitlines()[-50:]:
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if (
+            isinstance(data, dict)
+            and isinstance(data.get("smoke_phase"), str)
+            and data["smoke_phase"] in phases
+        ):
+            last = {
+                "smoke_phase": data["smoke_phase"],
+                "source_changed": data.get("source_changed")
+                if type(data.get("source_changed")) is bool
+                else None,
+            }
+    return last
+
+
 def run(args, *, cwd=ROOT, timeout=60, env=None):
-    return (
-        subprocess.run(
+    try:
+        completed = subprocess.run(
             args, cwd=cwd, env=env, capture_output=True, check=True, timeout=timeout
         )
-        .stdout.decode("utf-8", errors="replace")
-        .strip()
-    )
+    except subprocess.TimeoutExpired as exc:
+        emit(
+            subprocess_check="timeout",
+            timeout_seconds=timeout,
+            child_progress=child_progress(exc.stdout),
+        )
+        raise
+    except subprocess.CalledProcessError as exc:
+        emit(
+            subprocess_check="failed",
+            exit_code=exc.returncode,
+            child_progress=child_progress(exc.stdout),
+        )
+        raise
+    return completed.stdout.decode("utf-8", errors="replace").strip()
 
 
 def service(*args):
@@ -127,6 +171,7 @@ def prepare(root, stage, manifest, patch):
     patch_path = stage / "overlay.patch"
     patch_path.write_bytes(patch)
     for options in (("--check",), ()):
+        emit(release_phase="patch_check" if options else "patch_staging")
         run(["git", "apply", *options, str(patch_path)], cwd=stage, timeout=15)
     verify(stage, manifest["after"])
     for name in manifest["after"]:
@@ -180,6 +225,7 @@ def target_snapshot(db_path):
 
 
 def smoke(root):
+    emit(release_phase="offline_workflow")
     environment = dict(os.environ)
     environment.update(
         PYTHONPATH=str(root), PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8"
@@ -489,9 +535,11 @@ def main():
         return
     with tempfile.TemporaryDirectory(prefix="mywave-editorial-stage-") as directory:
         stage = Path(directory)
+        emit(release_phase="prepare_stage")
         prepared = prepare(ROOT, stage, manifest, patch)
         smoke(stage)
         if hosts:
+            emit(release_phase="article_probe")
             result = json.loads(
                 run(
                     [
