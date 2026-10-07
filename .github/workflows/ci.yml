@@ -155,4 +155,5 @@ jobs:
             tests/test_openai_skip_moderation.py \
             tests/test_editorial_flow_offline.py \
             tests/test_editorial_release.py \
+            tests/test_summary_preview.py \
             tests/test_publication_service.py
