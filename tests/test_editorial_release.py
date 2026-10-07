@@ -3,6 +3,8 @@ import importlib.util
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 
 import pytest
 
@@ -191,3 +193,70 @@ def test_path_and_rollback_cannot_escape_workspace(tmp_path, monkeypatch):
         RELEASE.path_for(root, "../outside.py")
     with pytest.raises(RuntimeError, match="unsafe_backup_path"):
         RELEASE.rollback(str(root.parent))
+
+
+def test_offline_smoke_does_not_enter_sheets_or_media_with_enabled_configuration():
+    code = """import asyncio,json,runpy,sys
+namespace=runpy.run_path(sys.argv[1],run_name="offline_smoke_test")
+from config.settings import config
+from services import raw_feed_sync
+from telegram_bot import views
+config.GOOGLE_SHEET_ID="offline-sheet"
+config.GOOGLE_CREDENTIALS_FILE="offline-credentials.json"
+calls=[]
+async def sheets(*args,**kwargs):
+ calls.append("sheets")
+ return None
+async def media(*args,**kwargs):
+ calls.append("media")
+ return None
+raw_feed_sync._get_doc=sheets
+views.maybe_autoupload_local_cover_and_sync_sheet=media
+asyncio.run(asyncio.wait_for(namespace["main"](),timeout=25))
+print(json.dumps({"external_hooks":calls}))
+"""
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            code,
+            str(SCRIPT.parent / "editorial_offline_smoke.py"),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=40,
+    )
+    assert process.returncode == 0, process.stderr[-1000:]
+    assert json.loads(process.stdout.splitlines()[-1]) == {"external_hooks": []}
+
+
+def test_timeout_diagnostics_only_show_whitelisted_progress(
+    monkeypatch, capsys, tmp_path
+):
+    output = b'private output\n{"smoke_phase":"owner_comment","source_changed":false,"key":"private-key"}\n'
+
+    def timed_out(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            ["private-command"], 60, output=output, stderr=b"private stderr"
+        )
+
+    monkeypatch.setattr(RELEASE.subprocess, "run", timed_out)
+    with pytest.raises(subprocess.TimeoutExpired):
+        RELEASE.run(["private-command"], cwd=tmp_path)
+    line = capsys.readouterr().out
+    assert json.loads(line) == {
+        "subprocess_check": "timeout",
+        "timeout_seconds": 60,
+        "child_progress": {"smoke_phase": "owner_comment", "source_changed": False},
+    }
+    assert "private" not in line
+
+
+def test_child_progress_ignores_arbitrary_output_and_malformed_fields():
+    assert (
+        RELEASE.child_progress('{"smoke_phase":["private"]}\n{"secret":"private"}\n')
+        is None
+    )

@@ -21,7 +21,7 @@
     "utils/source_context.py": "d6aa49aa8487f73a2345ebbe731eb43a72c9b63b7dd84f55b22b71cf33112382",
     "storage/migrations/004_source_context.sql": "77d6eea365f2e00ae47b5c97c066137915371f5ed224f34557d5e5059b7ed71c",
     "scripts/probe_source_article.py": "bb6117a4b64bab95176435aece92862d52197f98c437096771173bc1f486343b",
-    "scripts/editorial_offline_smoke.py": "f34c145e31dab1050437928905aeab47bbcbaa21714237163b2fd13749b9ee16"
+    "scripts/editorial_offline_smoke.py": "d20a4958f37a334b07720f3553e18878a69a3b67f0df7dd8d7d21cadca9a786b"
   },
   "guard": {
     "telegram_bot/views.py": "56e0fc0d96def21b762de0a31609903ed18eace3bfa1099b520ec042e7af38b3",
@@ -30,5 +30,5 @@
     "utils/safe_http.py": "d493c74b0efb5fdfefe557c7848e7751569de3c6798b3eb0c995f93c9fec5f8c",
     "utils/russian_summary.py": "b96d596f2c6e52ca79d7feec0b37d3af38c3fa922c4b28e2ed880da7a637b1ba"
   },
-  "patch_sha256": "796f8a43def2119949e2428eecaf4317110b09000187de132dda9f2e2d107cf6"
+  "patch_sha256": "e1cba7cc3e330655e9d9a1e4fd4043a30b32c0d04f1f14fbf3d287b8be32890f"
 }

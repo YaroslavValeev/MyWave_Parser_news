@@ -14,6 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 logging.disable(logging.CRITICAL)
 
+
+def progress(phase, *, changed=None):
+    print(json.dumps({"smoke_phase": phase, "source_changed": changed}), flush=True)
+
+
+progress("imports")
 import httpx
 from openai import AsyncOpenAI
 from config.settings import config
@@ -28,8 +34,11 @@ from telegram_bot.views import (
 )
 from utils.source_context import source_input_hash
 
+progress("imports_complete")
+
 
 async def run_case(db: Path, *, changed: bool):
+    progress("database", changed=changed)
     await initialize_database(db)
     repo = AsyncNewsRepository(db)
     url = "https://article.example.test/news/1785"
@@ -114,6 +123,7 @@ async def run_case(db: Path, *, changed: bool):
             ),
             patch("services.source_article.retrieve_article", retrieve),
         ):
+            progress("nlp", changed=changed)
             assert await reprocess_items([item_id], repository=repo, client=ai) == 1
     assert all(r["model"] == "gpt-4o-mini" for r in requests)
     assert all(r["messages"][1]["content"] == text for r in requests)
@@ -131,10 +141,17 @@ async def run_case(db: Path, *, changed: bool):
         AsyncMock(),
     )
     with (
+        patch("telegram_bot.views.sync_owner_comment", AsyncMock(return_value=False)),
+        patch("telegram_bot.views.sync_final_text", AsyncMock(return_value=False)),
+        patch(
+            "telegram_bot.views.maybe_autoupload_local_cover_and_sync_sheet",
+            AsyncMock(return_value=None),
+        ),
         patch("telegram_bot.views.sync_publication_queue", AsyncMock()),
         patch("telegram_bot.views._offer_next_review", AsyncMock()),
         patch("services.publication.sync_publication_result", AsyncMock()),
     ):
+        progress("owner_comment", changed=changed)
         await save_owner_review_comment(
             repo,
             item_id,
@@ -142,6 +159,7 @@ async def run_case(db: Path, *, changed: bool):
             user_id=1,
             username="offline_owner",
         )
+        progress("owner_approval", changed=changed)
         await handle_callback(repo, query, {"action": "approve", "item_id": item_id})
         await handle_callback(
             repo, query, {"action": "publish_now", "item_id": item_id}
@@ -153,6 +171,7 @@ async def run_case(db: Path, *, changed: bool):
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MagicMock(message_id=123))
         service = PublicationService(repo, bot, channel_id="offline-test")
+        progress("publication", changed=changed)
         assert await service.publish_pending(limit=1) == (0 if changed else 1)
         assert bot.send_message.await_count == (0 if changed else 1)
         if not changed:
@@ -207,7 +226,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.run(asyncio.wait_for(main(), timeout=35))
     except Exception as exc:
         print(json.dumps({"offline_smoke": "failed", "error_type": type(exc).__name__}))
         raise SystemExit(1)
