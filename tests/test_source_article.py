@@ -9,7 +9,7 @@ from services import source_article
 from services.nlp_pipeline import reprocess_items
 from storage.repository import AsyncNewsRepository, initialize_database
 from utils.item_context import get_item_text_context, is_title_only_summary_fallback
-from utils.source_context import linked_article_context, source_input_hash
+from utils.source_context import article_urls, linked_article_context, source_input_hash
 
 
 URL = "https://news.example.test/news/1785"
@@ -41,6 +41,51 @@ def evidence(value):
         "text_sha256": hashlib.sha256(TEXT.encode()).hexdigest(),
         "html_sha256": hashlib.sha256(HTML).hexdigest(),
     }
+
+
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        (f"[{URL}]({URL})", [URL]),
+        (f"Подробности: [источник]({URL}).", [URL]),
+        (f"[https://display.example.test/one]({URL})", [URL]),
+        (
+            "[тема](https://news.example.test/article_(PCM))",
+            ["https://news.example.test/article_(PCM)"],
+        ),
+        (
+            f"[одна]({URL}) [другая](https://news.example.test/news/9999)",
+            [URL, "https://news.example.test/news/9999"],
+        ),
+    ],
+)
+def test_markdown_link_destinations_are_separate_and_unmodified(content, expected):
+    assert article_urls({"content": content}) == expected
+
+
+def test_linked_caption_requires_article_and_then_uses_its_text(monkeypatch):
+    from config.settings import config
+
+    monkeypatch.setattr(config, "SOURCE_ARTICLE_FETCH_ENABLED", True)
+    monkeypatch.setattr(config, "SOURCE_ARTICLE_ALLOWED_HOSTS", ("news.example.test",))
+    value = {**item(), "content": f"Короткая подпись: [{URL}]({URL})"}
+    assert get_item_text_context(value) == ""
+    assert is_title_only_summary_fallback(
+        value, {"summary": "Чемпионат", "extra": {"owner_rewritten": True}}
+    )
+    value["source_context"] = evidence(value)
+    assert get_item_text_context(value) == TEXT
+
+
+def test_other_hosts_and_disabled_fetch_keep_original_context(monkeypatch):
+    from config.settings import config
+
+    value = {**item(), "content": f"Полный пост с фактами и ссылкой {URL}"}
+    monkeypatch.setattr(config, "SOURCE_ARTICLE_FETCH_ENABLED", False)
+    assert get_item_text_context(value) == value["content"]
+    monkeypatch.setattr(config, "SOURCE_ARTICLE_FETCH_ENABLED", True)
+    monkeypatch.setattr(config, "SOURCE_ARTICLE_ALLOWED_HOSTS", ("other.example.test",))
+    assert get_item_text_context(value) == value["content"]
 
 
 def test_context_is_bound_to_original_item_and_derived_result():
@@ -175,8 +220,9 @@ def test_fetch_refuses_unsafe_or_wrong_source(monkeypatch, public_dns, case, rea
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("caption", [False, True])
 async def test_pipeline_fetches_selected_source_preserving_original_and_other_queue(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, caption
 ):
     from config.settings import config
 
@@ -186,7 +232,7 @@ async def test_pipeline_fetches_selected_source_preserving_original_and_other_qu
     selected = await repo.create_item(
         {
             "source": "Telegram",
-            "content": URL,
+            "content": f"Короткая подпись: [{URL}]({URL})" if caption else URL,
             "link": "https://t.me/Channel/3048",
             "status": "review",
             "images": "photo.jpg",
@@ -225,6 +271,39 @@ async def test_pipeline_fetches_selected_source_preserving_original_and_other_qu
     assert nlp["author_notes"] == "Комментарий владельца"
     assert not is_title_only_summary_fallback(saved, nlp)
     assert await repo.get_last_log(selected, "source_article_fetched")
+
+
+@pytest.mark.asyncio
+async def test_failed_article_fetch_does_not_summarize_only_the_caption(
+    tmp_path, monkeypatch
+):
+    from config.settings import config
+
+    db = tmp_path / "data.db"
+    await initialize_database(db)
+    repo = AsyncNewsRepository(db)
+    selected = await repo.create_item(
+        {
+            "source": "Telegram",
+            "content": f"Подробности: [{URL}]({URL})",
+            "link": "https://t.me/Channel/1",
+            "status": "review",
+        }
+    )
+    monkeypatch.setattr(config, "SOURCE_ARTICLE_FETCH_ENABLED", True)
+    monkeypatch.setattr(config, "SOURCE_ARTICLE_ALLOWED_HOSTS", ("news.example.test",))
+    monkeypatch.setattr(
+        source_article,
+        "retrieve_article",
+        AsyncMock(side_effect=source_article.ArticleFetchError("http_error")),
+    )
+    client = AsyncMock()
+    assert await reprocess_items([selected], repository=repo, client=client) == 1
+    client.summarize.assert_not_awaited()
+    assert (await repo.get_item(selected))["status"] == "review"
+    assert (await repo.get_nlp_results(selected))["extra"][
+        "source_context_missing"
+    ] is True
 
 
 @pytest.mark.asyncio
