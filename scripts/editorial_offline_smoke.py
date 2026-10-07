@@ -46,7 +46,7 @@ async def run_case(db: Path, *, changed: bool):
     item_id = await repo.create_item(
         {
             "source": "Telegram",
-            "content": url,
+            "content": f"Подробности: [{url}]({url})",
             "link": "https://t.me/example/3048",
             "status": "review",
         }
