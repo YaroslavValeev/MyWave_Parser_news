@@ -4,9 +4,10 @@ import re
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
+from config.settings import config
 from nlp.sanitize import sanitize_text
 from utils.card_preview_text import to_card_preview_text
-from utils.source_context import linked_article_context, source_input_hash
+from utils.source_context import article_urls, linked_article_context, source_input_hash
 
 _TELEGRAM_HOSTS = {"t.me", "telegram.me"}
 _TITLE_PLACEHOLDERS = {"без заголовка", "(без заголовка)"}
@@ -20,14 +21,28 @@ def _normalize_candidate_title(value: object) -> str:
     return title
 
 
+def requires_linked_article_context(item: Mapping[str, Any]) -> bool:
+    """An explicitly linked allowed article is the factual source, not its caption."""
+    if not getattr(config, "SOURCE_ARTICLE_FETCH_ENABLED", False):
+        return False
+    urls = article_urls(item)
+    return len(urls) == 1 and urlparse(urls[0]).hostname in set(
+        getattr(config, "SOURCE_ARTICLE_ALLOWED_HOSTS", ())
+    )
+
+
 def get_item_text_context(item: Mapping[str, Any]) -> str:
     """Вернуть очищенный текстовый контекст материала только из реального контента."""
+    evidence = linked_article_context(item)
+    if evidence:
+        return evidence["text"]
+    if requires_linked_article_context(item):
+        return ""
     for key in ("content", "transcript"):
         text = sanitize_text(item.get(key))
         if any(char.isalnum() for char in _URL_RE.sub("", text)):
             return text
-    evidence = linked_article_context(item)
-    return evidence["text"] if evidence else ""
+    return ""
 
 
 def is_telegram_item(item: Mapping[str, Any]) -> bool:
@@ -116,6 +131,8 @@ def is_title_only_summary_fallback(
     nlp = nlp or {}
     extra = nlp.get("extra")
     evidence = linked_article_context(item)
+    if requires_linked_article_context(item) and not evidence:
+        return True
     if isinstance(extra, Mapping) and extra.get("source_input_sha256"):
         if extra["source_input_sha256"] != source_input_hash(item):
             return True

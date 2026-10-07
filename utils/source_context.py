@@ -11,7 +11,42 @@ from urllib.parse import urlsplit, urlunsplit
 from nlp.sanitize import sanitize_text
 
 MAX_ARTICLE_TEXT = 30000
-_URLS = re.compile(r'https?://[^\s<>"\'\u200b]+', re.I)
+_URLS = re.compile(r'https?://[^\s<>"\'\[\]\u200b]+', re.I)
+_MARKDOWN_LINK = re.compile(r"!?\[[^\]\r\n]*\]\(\s*(?=https?://)", re.I)
+
+
+def _markdown_destinations(raw: str) -> str:
+    """Replace link labels with destinations, preserving balanced URL parentheses."""
+    replacements = []
+    for match in _MARKDOWN_LINK.finditer(raw):
+        depth = 1
+        end = match.end()
+        while end < len(raw) and raw[end] not in "\r\n":
+            if raw[end] == "(":
+                depth += 1
+            elif raw[end] == ")":
+                depth -= 1
+                if depth == 0:
+                    target = raw[match.end() : end].strip().split(None, 1)[0]
+                    replacements.append(
+                        (
+                            match.start(),
+                            end + 1,
+                            " " if match.group().startswith("!") else target,
+                        )
+                    )
+                    break
+            end += 1
+    for start, end, target in reversed(replacements):
+        raw = raw[:start] + target + raw[end:]
+    return raw
+
+
+def _trim_url(value: str) -> str:
+    value = value.rstrip(".,;]")
+    while value.endswith(")") and value.count(")") > value.count("("):
+        value = value[:-1]
+    return value
 
 
 def source_input_hash(item: Mapping[str, Any]) -> str:
@@ -33,12 +68,15 @@ def normalized_article_url(value: str) -> str:
 
 def article_urls(item: Mapping[str, Any]) -> list[str]:
     """Prefer links explicitly in the post; use its own link only when empty."""
-    raw = sanitize_text(item.get("content")) or sanitize_text(item.get("transcript"))
+    raw = _markdown_destinations(
+        str(item.get("content") or item.get("transcript") or "")
+    )
+    raw = sanitize_text(raw)
     urls = _URLS.findall(raw) if raw else [str(item.get("link") or "")]
     found = []
     for value in urls:
         try:
-            url = normalized_article_url(value.rstrip(").,;]"))
+            url = normalized_article_url(_trim_url(value))
         except ValueError:
             continue
         if url not in found:
