@@ -1,4 +1,5 @@
 # Release digests must stay identical on Windows, GitHub and Linux.
 scripts/releases/editorial-4o-mini/* -text
+scripts/releases/article-links/* -text
 scripts/deploy_editorial_release.py text eol=lf
 scripts/editorial_offline_smoke.py text eol=lf

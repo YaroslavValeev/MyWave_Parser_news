@@ -260,3 +260,27 @@ def test_child_progress_ignores_arbitrary_output_and_malformed_fields():
         RELEASE.child_progress('{"smoke_phase":["private"]}\n{"secret":"private"}\n')
         is None
     )
+
+
+def test_article_link_package_is_an_update_of_the_installed_release():
+    directory = SCRIPT.parent / "releases/article-links"
+    raw = (directory / "manifest.json").read_bytes()
+    manifest = json.loads(raw)
+    original = json.loads(
+        (SCRIPT.parent / "releases/editorial-4o-mini/manifest.json").read_bytes()
+    )
+    assert RELEASE.digest(raw) == RELEASE.PACKAGE_MANIFESTS["article-links"]
+    assert (
+        set(manifest["before"])
+        == set(manifest["after"])
+        == {
+            "utils/source_context.py",
+            "utils/item_context.py",
+            "scripts/editorial_offline_smoke.py",
+        }
+    )
+    assert all(v == original["after"][name] for name, v in manifest["before"].items())
+    assert (
+        RELEASE.digest((directory / "overlay.patch").read_bytes())
+        == manifest["patch_sha256"]
+    )

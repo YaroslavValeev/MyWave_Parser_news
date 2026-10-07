@@ -26,6 +26,10 @@ ROOT = Path("/opt/bot3/parser-new-bot")
 BACKUPS = Path("/opt/bot3/backups")
 SERVICE = "parser-news-bot"
 MANIFEST_SHA256 = "dcaab37d071e3a30c70bb0438bfd34afb79c4aba38ac95a1966386527996f327"
+PACKAGE_MANIFESTS = {
+    "editorial-4o-mini": MANIFEST_SHA256,
+    "article-links": "c12be9cc541c6f3d113df2b2df108488856341c939bd2376133157b7f020293a",
+}
 SAFE_ERRORS = {
     "unsafe_release_path",
     "release_artifact_hash_mismatch",
@@ -459,6 +463,9 @@ def main():
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--rollback-dir")
     parser.add_argument("--package-ref")
+    parser.add_argument(
+        "--package", choices=tuple(PACKAGE_MANIFESTS), default="editorial-4o-mini"
+    )
     parser.add_argument("--enable-host", action="append", default=[])
     parser.add_argument("--probe-url")
     args = parser.parse_args()
@@ -496,9 +503,13 @@ def main():
     base = (
         "https://raw.githubusercontent.com/YaroslavValeev/MyWave_Parser_news/"
         + args.package_ref
-        + "/scripts/releases/editorial-4o-mini/"
+        + "/scripts/releases/"
+        + args.package
+        + "/"
     )
-    manifest = json.loads(fetch(base + "manifest.json", MANIFEST_SHA256))
+    manifest = json.loads(
+        fetch(base + "manifest.json", PACKAGE_MANIFESTS[args.package])
+    )
     patch = fetch(base + "overlay.patch", manifest["patch_sha256"])
     emit(
         audit="runtime",
