@@ -284,3 +284,22 @@ def test_article_link_package_is_an_update_of_the_installed_release():
         RELEASE.digest((directory / "overlay.patch").read_bytes())
         == manifest["patch_sha256"]
     )
+
+
+def test_summary_package_preserves_installed_profile_and_limits_changed_files():
+    directory = SCRIPT.parent / "releases/summary-conditions"
+    raw = (directory / "manifest.json").read_bytes()
+    manifest = json.loads(raw)
+    prior = json.loads(
+        (SCRIPT.parent / "releases/article-links/manifest.json").read_bytes()
+    )
+    expected = {**prior["guard"], **prior["after"]}
+    target = "nlp/openai_client.py"
+    assert RELEASE.digest(raw) == RELEASE.PACKAGE_MANIFESTS["summary-conditions"]
+    assert set(manifest["before"]) == set(manifest["after"]) == {target}
+    assert manifest["before"] == {target: expected.pop(target)}
+    assert manifest["guard"] == expected
+    patch = (directory / "overlay.patch").read_bytes()
+    assert RELEASE.digest(patch) == manifest["patch_sha256"]
+    assert patch.count(b"diff --git") == 1
+    assert b"a/nlp/openai_client.py b/nlp/openai_client.py" in patch

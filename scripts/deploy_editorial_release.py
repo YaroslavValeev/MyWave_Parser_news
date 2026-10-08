@@ -29,6 +29,7 @@ MANIFEST_SHA256 = "dcaab37d071e3a30c70bb0438bfd34afb79c4aba38ac95a1966386527996f
 PACKAGE_MANIFESTS = {
     "editorial-4o-mini": MANIFEST_SHA256,
     "article-links": "c12be9cc541c6f3d113df2b2df108488856341c939bd2376133157b7f020293a",
+    "summary-conditions": "e4b1aae4f82c867fa7af8d1ec404720087f41794a48a2b9f76cb5df45b884987",
 }
 SAFE_ERRORS = {
     "unsafe_release_path",
