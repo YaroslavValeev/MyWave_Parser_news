@@ -79,6 +79,17 @@ class SchedulerService:
             id="retry_publications",
             replace_existing=True,
         )
+        if getattr(config, "MAINTENANCE_ENABLED", True):
+            self._scheduler.add_job(
+                self._maintenance_job,
+                CronTrigger(
+                    hour=int(getattr(config, "MAINTENANCE_HOUR", 4)),
+                    minute=int(getattr(config, "MAINTENANCE_MINUTE", 10)),
+                ),
+                name="maintenance",
+                id="maintenance",
+                replace_existing=True,
+            )
         self._scheduler.add_job(
             self._daily_stats_job,
             CronTrigger(hour=config.DAILY_STATS_HOUR, minute=config.DAILY_STATS_MINUTE),
@@ -215,6 +226,14 @@ class SchedulerService:
             await run_media_hydrate(self._repository)
         except Exception:  # noqa: BLE001
             LOGGER.exception("media_hydrate job failed")
+
+    async def _maintenance_job(self) -> None:
+        try:
+            from services.maintenance import run_maintenance
+
+            await asyncio.to_thread(run_maintenance)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("maintenance job failed")
 
     async def _retry_publications_job(self) -> None:
         try:

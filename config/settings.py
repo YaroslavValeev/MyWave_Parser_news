@@ -177,6 +177,13 @@ class Config:
     MEDIA_HYDRATE_INTERVAL_MINUTES = int(os.getenv("MEDIA_HYDRATE_INTERVAL_MINUTES", "3"))
     MEDIA_HYDRATE_BATCH = int(os.getenv("MEDIA_HYDRATE_BATCH", "5"))
     MEDIA_HYDRATE_MAX_ATTEMPTS = int(os.getenv("MEDIA_HYDRATE_MAX_ATTEMPTS", "3"))
+    # Ежедневное обслуживание: очистка downloads/ и бэкап SQLite.
+    MAINTENANCE_ENABLED = os.getenv("MAINTENANCE_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
+    MAINTENANCE_HOUR = int(os.getenv("MAINTENANCE_HOUR", "4"))
+    MAINTENANCE_MINUTE = int(os.getenv("MAINTENANCE_MINUTE", "10"))
+    DOWNLOADS_RETENTION_DAYS = int(os.getenv("DOWNLOADS_RETENTION_DAYS", "30"))
+    DB_BACKUP_DIR = os.getenv("DB_BACKUP_DIR", "backups/db")
+    DB_BACKUP_KEEP = int(os.getenv("DB_BACKUP_KEEP", "14"))
     SITE_CACHE_INVALIDATE_ENDPOINT = (
         os.getenv("SITE_CACHE_INVALIDATE_ENDPOINT")
         or "/api/blog/cache/invalidate"
