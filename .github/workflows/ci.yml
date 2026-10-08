@@ -176,3 +176,4 @@ jobs:
             tests/test_rss_collector.py \
             tests/test_httpx_proxy_kwargs.py \
             tests/test_config_proxy.py
+          pytest -q --tb=short tests/test_maintenance.py

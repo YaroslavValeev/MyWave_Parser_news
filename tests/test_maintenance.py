@@ -2,8 +2,14 @@ import os
 import sqlite3
 import time
 from datetime import datetime
+from pathlib import Path
 
-from services.maintenance import backup_database, cleanup_downloads
+from services.maintenance import (
+    backup_database,
+    cleanup_downloads,
+    referenced_downloads,
+    run_maintenance,
+)
 
 
 def _age(path, days):
@@ -59,3 +65,62 @@ def test_backup_creates_copy_and_rotates(tmp_path):
 
 def test_backup_missing_db_returns_none(tmp_path):
     assert backup_database(tmp_path / "nope.db", tmp_path / "b", keep=3) is None
+
+
+def test_referenced_review_media_survives_retention_cleanup(tmp_path, monkeypatch):
+    from services.maintenance import config
+
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "downloads"
+    root.mkdir()
+    used, cached, orphan = (
+        root / name for name in ("review.jpg", "cover.jpg", "orphan.jpg")
+    )
+    for path in (used, cached, orphan):
+        path.write_bytes(b"media")
+        _age(path, 40)
+    db_path = tmp_path / "data.db"
+    with sqlite3.connect(db_path) as db:
+        db.executescript(
+            "CREATE TABLE items(images TEXT,videos TEXT); CREATE TABLE nlp_results(extra TEXT);"
+        )
+        db.execute("INSERT INTO items VALUES('/static/downloads/review.jpg',NULL)")
+        db.execute(
+            "INSERT INTO nlp_results VALUES(?)",
+            ('{"cover":{"local_path":"downloads/cover.jpg"}}',),
+        )
+    monkeypatch.setattr(config, "DB_PATH", str(db_path))
+    monkeypatch.setattr(config, "DB_BACKUP_DIR", str(tmp_path / "backups"))
+    monkeypatch.setattr(config, "DB_BACKUP_KEEP", 2)
+    monkeypatch.setattr(config, "DOWNLOADS_RETENTION_DAYS", 30)
+    assert referenced_downloads(db_path) == {used.resolve(), cached.resolve()}
+    result = run_maintenance()
+    assert (
+        result["downloads_removed"] == 1
+        and used.exists()
+        and cached.exists()
+        and not orphan.exists()
+    )
+    assert Path(result["db_backup"]).is_file()
+
+
+def test_cleanup_skips_symlinks_and_inventory_failure(tmp_path, monkeypatch):
+    from services.maintenance import config
+
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "downloads"
+    root.mkdir()
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"keep")
+    _age(outside, 40)
+    link = root / "link.jpg"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pass
+    assert cleanup_downloads(root, days=30) == (0, 0) and outside.exists()
+    inside = root / "review.jpg"
+    inside.write_bytes(b"keep")
+    _age(inside, 40)
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "missing.db"))
+    assert run_maintenance()["cleanup_skipped"] is True and inside.exists()
