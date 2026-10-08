@@ -156,4 +156,5 @@ jobs:
             tests/test_editorial_flow_offline.py \
             tests/test_editorial_release.py \
             tests/test_summary_preview.py \
+            tests/test_review_article_repair.py \
             tests/test_publication_service.py
