@@ -4,10 +4,14 @@ import random
 import json
 from datetime import datetime
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Generator
-from utils.helpers import download_media as download_media_helper  # Импортируем из utils/helpers
+from utils.helpers import (
+    _media_ext_for_message,
+    download_media as download_media_helper,
+)
 from telethon import TelegramClient
-from config.settings import config
+from utils.media_utils import VIDEO_EXTENSIONS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -85,27 +89,42 @@ class TelethonParser(BaseParser):
                 await self.human_delay()  # Задержка между сообщениями
                 try:
                     text = message.text or ""
-                    media_downloaded = False
-                    media_links = []
+                    media_links: list[str] = []
+                    video_links: list[str] = []
                     if message.media and download_media:
-                        media_downloaded = await download_media_helper(message)
-                        # Здесь можно добавить путь к скачанному файлу в media_links
-                        # media_links.append(путь_к_файлу)
+                        ok = await download_media_helper(message)
+                        if ok:
+                            local = Path("downloads") / f"{message.id}{_media_ext_for_message(message)}"
+                            if local.is_file() and local.stat().st_size > 0:
+                                ref = local.as_posix()
+                                ext = local.suffix.lower()
+                                if ext in VIDEO_EXTENSIONS:
+                                    video_links.append(ref)
+                                else:
+                                    media_links.append(ref)
 
                     title = getattr(message, 'post_author', '') or getattr(entity, 'title', '')
                     checksum = ''  # Можно реализовать md5(title+source.url)
+                    username = getattr(entity, "username", None)
+                    post_url = (
+                        f"https://t.me/{username}/{message.id}"
+                        if username
+                        else f"{str(source.url).rstrip('/')}/{message.id}"
+                    )
 
                     yield {
                         "id": str(message.id),
                         "source_type": "telegram",
                         "source_name": getattr(entity, 'title', ''),
                         "source_url": source.url,
+                        "link": post_url,
                         "created_at": message.date.strftime('%Y-%m-%d %H:%M:%S') if message.date else datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
                         "ingest_status": "raw",
                         "raw_title": title,
                         "raw_content": text,
                         "raw_html": "",  # Можно добавить html-версию, если есть
-                        "raw_media": json.dumps(media_links),
+                        "raw_media": json.dumps(media_links + video_links),
+                        "videos": "\n".join(video_links) if video_links else "",
                         "raw_tags": "",  # Можно добавить теги, если есть
                         "checksum": checksum,
                         "parse_error": "",
@@ -151,12 +170,7 @@ class TelethonParser(BaseParser):
             }
 
     async def human_delay(self):
-        """
-        Вносит случайную задержку для имитации действий человека.
-
-        Notes:
-            Задержка находится в диапазоне от 1.5 до 4.0 секунд.
-        """
-        delay = random.uniform(1.5, 4.0)
-        logger.debug(f"Задержка: {delay:.2f} сек")
+        """Короткая пауза между запросами (раньше 1.5–4 с раздували полный сбор)."""
+        delay = random.uniform(0.25, 0.7)
+        logger.debug("Задержка: %.2f сек", delay)
         await asyncio.sleep(delay)

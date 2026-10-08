@@ -19,6 +19,7 @@ from utils.media_utils import (
     decode_media_payload,
     extract_raw_feed_cover_image_url,
     is_image_ref,
+    is_telegram_url,
     is_video_ref,
     iter_media_candidates,
     media_ref_to_local_path,
@@ -204,7 +205,12 @@ class SiteMediaClient:
             return MediaUploadResult(ok=False, error="media_file_not_found")
 
         size = path.stat().st_size
-        max_bytes = int(getattr(config, "MEDIA_UPLOAD_MAX_BYTES", 10 * 1024 * 1024))
+        if media_kind == "video":
+            max_bytes = int(
+                getattr(config, "MEDIA_UPLOAD_VIDEO_MAX_BYTES", 50 * 1024 * 1024)
+            )
+        else:
+            max_bytes = int(getattr(config, "MEDIA_UPLOAD_MAX_BYTES", 10 * 1024 * 1024))
         if size > max_bytes:
             return MediaUploadResult(ok=False, error="media_file_too_large", bytes=size)
 
@@ -379,6 +385,29 @@ async def upload_cover_image(
     )
 
 
+def _upload_video_sync(
+    path: Path,
+    *,
+    item_id: int,
+    item: Mapping[str, Any] | None,
+) -> MediaUploadResult:
+    return _DEFAULT_CLIENT.upload_video(path, item_id=item_id, item=item)
+
+
+async def upload_video_file(
+    path: Path | str,
+    *,
+    item_id: int,
+    item: Mapping[str, Any] | None = None,
+) -> MediaUploadResult:
+    return await asyncio.to_thread(
+        _upload_video_sync,
+        Path(path),
+        item_id=item_id,
+        item=item,
+    )
+
+
 def _split_media_refs(value: object) -> list[str]:
     if isinstance(value, str):
         refs = [part.strip() for part in value.splitlines() if part.strip()]
@@ -428,22 +457,114 @@ def find_local_cover_paths(item: Mapping[str, Any]) -> list[Path]:
     return _iter_local_cover_paths(item)
 
 
-def _prepend_ref(existing: object, new_ref: str) -> str:
+def _iter_local_video_paths(item: Mapping[str, Any]) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for key in ("videos", "raw_media", "media_json", "video_url"):
+        if key in {"raw_media", "media_json"}:
+            candidates = [
+                raw
+                for media_type, raw in iter_media_candidates(item.get(key))
+                if is_video_ref(raw, media_type=media_type)
+            ]
+        else:
+            candidates = _split_media_refs(item.get(key))
+        for candidate in candidates:
+            path = media_ref_to_local_path(candidate)
+            if path is None:
+                normalized = normalize_media_ref(candidate, media_type="video")
+                if not normalized or not is_video_ref(normalized, media_type="video"):
+                    continue
+                path = media_ref_to_local_path(normalized)
+            if path is None:
+                continue
+            key_path = str(path.resolve())
+            if key_path in seen:
+                continue
+            seen.add(key_path)
+            paths.append(path)
+    return paths
+
+
+def _prepend_ref(existing: object, new_ref: str, *, media_type: str = "image") -> str:
     refs = [new_ref]
     for candidate in _split_media_refs(existing):
-        normalized = normalize_media_ref(candidate, media_type="image")
+        normalized = normalize_media_ref(candidate, media_type=media_type)
         if normalized and normalized not in refs:
             refs.append(normalized)
     return "\n".join(refs)
+
+
+def _strip_telegram_cover_fields(item: dict[str, Any]) -> None:
+    for key in ("cover_image_url", "image_url"):
+        if is_telegram_url(item.get(key)):
+            item[key] = ""
+
+
+def _merge_video_media_json(existing: object, public_url: str) -> str:
+    payload = decode_media_payload(existing)
+    entry = {"type": "video", "url": public_url}
+    if payload is None or payload == "" or payload == [] or payload == {}:
+        return json.dumps(entry, ensure_ascii=False)
+    if isinstance(payload, list):
+        cleaned = [
+            part
+            for part in payload
+            if not (
+                isinstance(part, Mapping)
+                and str(part.get("type") or "").lower() == "video"
+                and is_telegram_url(part.get("url") or part.get("post_url"))
+            )
+        ]
+        cleaned.insert(0, entry)
+        return json.dumps(cleaned, ensure_ascii=False)
+    if isinstance(payload, Mapping):
+        if str(payload.get("type") or "").lower() == "video":
+            return json.dumps(entry, ensure_ascii=False)
+        return json.dumps([entry, dict(payload)], ensure_ascii=False)
+    return json.dumps(entry, ensure_ascii=False)
 
 
 async def prepare_item_media_for_raw_feed(
     item_id: int,
     item: Mapping[str, Any],
 ) -> tuple[dict[str, Any], MediaUploadResult | None]:
+    """Гарантировать публичный cover/video URL на сайте перед записью в raw_feed.
+
+    1) убрать t.me из cover полей;
+    2) если нет локального файла — скачать из Telegram (hydrate);
+    3) POST /api/media/upload → public_url в cover_image_url / video_url.
+    """
     out = dict(item)
-    paths = _iter_local_cover_paths(out)
+    _strip_telegram_cover_fields(out)
+
     existing_cover = extract_raw_feed_cover_image_url(out, prefer_largest=True)
+    # RSS без enclosure: добрать og:image со страницы статьи (link).
+    if not existing_cover:
+        article = str(out.get("link") or out.get("canonical_url") or "").strip()
+        if article.startswith(("http://", "https://")) and not is_telegram_url(article):
+            try:
+                from utils.rss_media import fetch_og_image_from_article
+
+                og = await asyncio.to_thread(fetch_og_image_from_article, article, timeout=15.0)
+                if og:
+                    out["cover_image_url"] = og
+                    out["image_url"] = og
+                    out["images"] = _prepend_ref(out.get("images"), og)
+                    existing_cover = extract_raw_feed_cover_image_url(out, prefer_largest=True)
+                    LOGGER.info(
+                        "rss/article og:image hydrated item_id=%s host=%s",
+                        item_id,
+                        urlparse(og).netloc,
+                    )
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("article og:image hydrate failed item_id=%s", item_id)
+
+    paths = _iter_local_cover_paths(out)
+    video_paths = _iter_local_video_paths(out)
+
+    # Уже валидный публичный URL (не локальный /static/downloads) — cover не трогаем.
+    cover_ready = False
     if existing_cover:
         local_cover_urls = {
             normalized
@@ -452,32 +573,80 @@ async def prepare_item_media_for_raw_feed(
             if normalized
         }
         parsed = urlparse(existing_cover)
-        if existing_cover not in local_cover_urls and not parsed.path.startswith("/static/downloads/"):
-            return out, None
-    if existing_cover and not media_upload_configured():
-        return out, None
+        if existing_cover not in local_cover_urls and not parsed.path.startswith(
+            "/static/downloads/"
+        ):
+            cover_ready = True
+            out["cover_image_url"] = existing_cover
+            out["image_url"] = existing_cover
+
     if not media_upload_configured():
         return out, None
-    if not paths:
-        return out, None
 
-    result = await upload_cover_image(paths[0], item_id=item_id, item=out)
-    if not result.ok:
-        endpoint = media_upload_url()
-        LOGGER.warning(
-            "media upload failed for item %s path=%s endpoint=%s status=%s error=%s",
-            item_id,
-            paths[0],
-            endpoint,
-            result.status_code,
-            result.error,
-        )
-        return out, result
+    # Нет локального файла для обложки → докачать с Telegram (Parser достучится, сайт — нет).
+    if not cover_ready and not paths:
+        try:
+            from services.telegram_media_hydrate import hydrate_item_media_from_telegram
 
-    out["cover_image_url"] = result.url
-    out["image_url"] = result.url
-    out["images"] = _prepend_ref(out.get("images"), result.url)
-    return out, result
+            out = await hydrate_item_media_from_telegram(out)
+            _strip_telegram_cover_fields(out)
+            paths = _iter_local_cover_paths(out)
+            video_paths = _iter_local_video_paths(out)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("telegram media hydrate failed for item %s", item_id)
+
+    last_result: MediaUploadResult | None = None
+
+    if not cover_ready and paths:
+        result = await upload_cover_image(paths[0], item_id=item_id, item=out)
+        last_result = result
+        if not result.ok:
+            LOGGER.warning(
+                "media upload failed for item %s path=%s endpoint=%s status=%s error=%s",
+                item_id,
+                paths[0],
+                media_upload_url(),
+                result.status_code,
+                result.error,
+            )
+        else:
+            LOGGER.info(
+                "media upload ok item_id=%s kind=image status=%s url_host=%s",
+                item_id,
+                result.status_code,
+                urlparse(result.url).netloc,
+            )
+            out["cover_image_url"] = result.url
+            out["image_url"] = result.url
+            out["images"] = _prepend_ref(out.get("images"), result.url)
+
+    # Видео: отдельный upload, даже если cover уже был на CDN.
+    existing_video = normalize_raw_feed_media_ref(out.get("video_url"), media_type="video")
+    if (not existing_video or is_telegram_url(out.get("video_url"))) and video_paths:
+        vresult = await upload_video_file(video_paths[0], item_id=item_id, item=out)
+        last_result = vresult if last_result is None or not last_result.ok else last_result
+        if not vresult.ok:
+            LOGGER.warning(
+                "video upload failed for item %s path=%s status=%s error=%s",
+                item_id,
+                video_paths[0],
+                vresult.status_code,
+                vresult.error,
+            )
+        else:
+            LOGGER.info(
+                "media upload ok item_id=%s kind=video status=%s url_host=%s",
+                item_id,
+                vresult.status_code,
+                urlparse(vresult.url).netloc,
+            )
+            out["video_url"] = vresult.url
+            out["videos"] = _prepend_ref(out.get("videos"), vresult.url, media_type="video")
+            out["media_json"] = _merge_video_media_json(out.get("media_json"), vresult.url)
+            if last_result is None or not last_result.ok:
+                last_result = vresult
+
+    return out, last_result
 
 
 async def maybe_autoupload_local_cover_and_sync_sheet(
@@ -496,10 +665,27 @@ async def maybe_autoupload_local_cover_and_sync_sheet(
         return None
 
     out, upload_result = await prepare_item_media_for_raw_feed(item_id, item)
-    if upload_result is None:
-        return None
 
-    if not upload_result.ok:
+    prev_images = str(item.get("images") or "").strip()
+    next_images = str(out.get("images") or "").strip()
+    next_videos = str(out.get("videos") or item.get("videos") or "").strip() or None
+    cover_changed = str(out.get("cover_image_url") or "").strip() != str(
+        item.get("cover_image_url") or ""
+    ).strip()
+    media_changed = (
+        (next_images and next_images != prev_images)
+        or next_videos != str(item.get("videos") or "").strip()
+        or cover_changed
+    )
+
+    if media_changed:
+        await repo.update_item_media(
+            item_id,
+            images=next_images or item.get("images"),
+            videos=next_videos,
+        )
+
+    if upload_result is not None and not upload_result.ok:
         await repo.log_event(
             item_id,
             "warning",
@@ -514,27 +700,24 @@ async def maybe_autoupload_local_cover_and_sync_sheet(
         )
         return upload_result
 
-    prev_images = str(item.get("images") or "").strip()
-    next_images = str(out.get("images") or "").strip()
-    if next_images and next_images != prev_images:
-        await repo.update_item_media(
-            item_id,
-            images=next_images,
-            videos=item.get("videos"),
-        )
+    if upload_result is None and not media_changed:
+        return None
 
     from services.raw_feed_sync import sync_media_fields
 
     item_after = await repo.get_item(item_id)
+    # Подмешать cover в item для sheet, если колонки cover нет в SQLite.
+    if item_after and out.get("cover_image_url"):
+        item_after = {**item_after, "cover_image_url": out.get("cover_image_url"), "image_url": out.get("image_url")}
     synced = bool(item_after and await sync_media_fields(item_after))
 
     await repo.log_event(
         item_id,
         "info",
-        "owner_cover_auto_uploaded",
+        "owner_cover_auto_uploaded" if upload_result and upload_result.ok else "owner_cover_auto_resolved",
         {
             "trigger": trigger,
-            "cover_url": upload_result.url,
+            "cover_url": (upload_result.url if upload_result and upload_result.ok else out.get("cover_image_url")),
             "sheet_synced": synced,
             "user_id": user_id,
             "username": username,
@@ -553,4 +736,5 @@ __all__ = [
     "media_upload_url",
     "prepare_item_media_for_raw_feed",
     "upload_cover_image",
+    "upload_video_file",
 ]

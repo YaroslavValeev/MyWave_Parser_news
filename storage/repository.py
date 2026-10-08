@@ -259,7 +259,7 @@ class AsyncNewsRepository:
             return [dict(r) for r in rows]
 
     async def list_review_queue(self, *, limit: int = 1) -> list[dict[str, Any]]:
-        """Очередь ревью Owner: review, затем new; без материалов старше REVIEW_MAX_AGE_DAYS."""
+        """Очередь ревью Owner: review, затем new; сначала самые свежие новости."""
         max_days = review_max_age_days()
         fetch_limit = max(limit * 50, limit, 50)
         q = """
@@ -267,7 +267,8 @@ class AsyncNewsRepository:
         WHERE status IN ('review', 'new')
         ORDER BY
             CASE status WHEN 'review' THEN 0 WHEN 'new' THEN 1 ELSE 2 END,
-            datetime(created_at) ASC
+            datetime(COALESCE(NULLIF(date, ''), created_at)) DESC,
+            id DESC
         LIMIT ?
         """
         async with self._connection() as db:

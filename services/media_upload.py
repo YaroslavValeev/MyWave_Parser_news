@@ -11,6 +11,7 @@ from services.site_media_client import (
     media_upload_url,
     prepare_item_media_for_raw_feed,
     upload_cover_image,
+    upload_video_file,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "media_upload_url",
     "prepare_item_media_for_raw_feed",
     "upload_cover_image",
+    "upload_video_file",
 ]

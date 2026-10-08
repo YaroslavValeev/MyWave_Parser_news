@@ -488,7 +488,7 @@ def test_build_review_card_normalizes_english_summary_to_russian():
     }
 
     card = build_review_card_html(item, nlp, link_as_anchor=False)
-    summary_section = card.split("<b>Саммари (NLP)</b>", 1)[1].split("\n\nИсточник", 1)[0]
+    summary_section = card.split("<b>Кратко (факты)</b>", 1)[1].split("\n\nИсточник", 1)[0]
 
     assert "Wakeboarding Magazine covers the latest" not in summary_section
     assert "Материал Wakeboarding Magazine о вейкбординге" in summary_section
@@ -513,8 +513,11 @@ def test_build_review_card_shows_final_version_when_present():
 
     assert "Финальная версия" in card
     assert "Финальная версия от автора" in card
+    assert "Экспертное мнение" in card
+    assert "Добавить акцент на событии" in card
     assert "Ваш комментарий" not in card
     assert card.index("Финальная версия от автора") < card.index("Исходный текст")
+    assert card.index("Экспертное мнение") < card.index("Кратко (факты)")
 
 
 @pytest.mark.owner_review

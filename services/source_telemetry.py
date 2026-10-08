@@ -120,40 +120,40 @@ def format_source_health_html(
     fail_streak: int = 3,
     limit: int = 8,
 ) -> str:
-    """HTML-блок telemetry источников для /stats и /report."""
+    """HTML-блок состояния источников для /stats и /report."""
     rows = list(rows or [])
     if not rows:
         return (
-            "\n\n<b>Source health</b>\n"
-            "Пока нет данных — выполните сбор новостей (миграция source_health)."
+            "\n\n<b>Состояние источников</b>\n"
+            "Пока нет данных — выполните сбор новостей."
         )
     verdict = evaluate_source_pipeline(
         rows, stale_hours=stale_hours, fail_streak=fail_streak
     )
-    status = "ok" if verdict["content_pipeline_ok"] else "degraded"
+    status = "норма" if verdict["content_pipeline_ok"] else "есть сбои"
     lines = [
-        "\n\n<b>Source health</b>",
-        f"\nPipeline: <code>{status}</code> "
-        f"(tracked {verdict['sources_tracked']}, "
-        f"ok recent {verdict['sources_ok_recent']})",
+        "\n\n<b>Состояние источников</b>",
+        f"\nКонвейер: <code>{status}</code> "
+        f"(отслеживается {verdict['sources_tracked']}, "
+        f"успешных недавно {verdict['sources_ok_recent']})",
     ]
     if verdict["fail_streak_sources"]:
         lines.append(
-            "\nFail streak: " + ", ".join(verdict["fail_streak_sources"][:5])
+            "\nСерия ошибок подряд: " + ", ".join(verdict["fail_streak_sources"][:5])
         )
-    lines.append("\n<b>По источникам (последний тик):</b>")
+    lines.append("\n<b>По источникам (последний прогон):</b>")
     for row in rows[: max(1, limit)]:
         name = str(row.get("source_name") or row.get("source_key") or "?")[:40]
         ok = "✓" if int(row.get("last_ok") or 0) else "✗"
         lat = row.get("last_latency_ms")
-        lat_s = f"{float(lat):.0f}ms" if lat is not None else "—"
+        lat_s = f"{float(lat):.0f} мс" if lat is not None else "—"
         lines.append(
             f"\n• {ok} {name}: "
-            f"col={int(row.get('last_collected') or 0)} "
-            f"dup={int(row.get('last_duplicates') or 0)} "
-            f"err={int(row.get('last_errors') or 0)} "
+            f"собрано={int(row.get('last_collected') or 0)} "
+            f"дубли={int(row.get('last_duplicates') or 0)} "
+            f"ошибки={int(row.get('last_errors') or 0)} "
             f"{lat_s} "
-            f"streak={int(row.get('consecutive_failures') or 0)}"
+            f"подряд={int(row.get('consecutive_failures') or 0)}"
         )
     return "".join(lines)
 

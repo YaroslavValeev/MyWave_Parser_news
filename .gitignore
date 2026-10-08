@@ -28,3 +28,9 @@ data/last_collect_report.json
 .env
 .env.local
 *.pem
+# Локальная SQLite и скачанные медиа
+*.db
+*.db-journal
+downloads/
+_aiosqlite_local_backup/
+_split_pr_b_paths.txt

@@ -6,6 +6,19 @@ from services.publication import PublicationService, PublicationSendError
 from storage.repository import AsyncNewsRepository
 
 
+@pytest.fixture(autouse=True)
+def _no_network_media_hydrate(monkeypatch):
+    async def _none(self, item_id, item):
+        return None
+
+    monkeypatch.setattr(PublicationService, "_hydrate_media", _none)
+
+    async def _no_download(url, **kwargs):
+        return None
+
+    monkeypatch.setattr("services.publication.http_url_as_input_file", _no_download)
+
+
 class DummyRepo(AsyncNewsRepository):
     def __init__(self):
         self._store = {}
@@ -81,6 +94,149 @@ async def test_publish_uses_item_image_as_cover():
     assert published == 1
     bot.send_photo.assert_awaited_once()
     assert bot.send_photo.await_args.kwargs["photo"] == "https://cdn.example.com/cover.jpg"
+
+
+def _repo_with_cover_item():
+    repo = DummyRepo()
+
+    async def list_candidates(limit=10):
+        return [
+            {
+                "id": 1,
+                "title": "T",
+                "content": "C",
+                "link": "http://x",
+                "images": "https://mywavewake.ru/static/uploads/review_media/cover.jpg",
+            }
+        ]
+
+    repo.list_publication_candidates = list_candidates  # type: ignore[method-assign]
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_publish_long_text_sends_photo_then_text():
+    repo = _repo_with_cover_item()
+    bot = MagicMock()
+    bot.send_photo = AsyncMock(return_value=MagicMock(message_id=10))
+    bot.send_message = AsyncMock(return_value=MagicMock(message_id=11))
+    svc = PublicationService(repo, bot, channel_id="42")
+    long_text = "Экспертное мнение " * 80
+    svc._build_caption = lambda item, nlp: long_text  # type: ignore[method-assign]
+
+    published = await svc.publish_pending(limit=1)
+
+    assert published == 1
+    bot.send_photo.assert_awaited_once()
+    assert "caption" not in bot.send_photo.await_args.kwargs
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.await_args.kwargs["text"] == long_text
+    assert repo._store[1]["pub"] == ("42", "11")
+
+
+@pytest.mark.asyncio
+async def test_publish_falls_back_to_text_when_photo_fails():
+    repo = _repo_with_cover_item()
+    bot = MagicMock()
+    bot.send_photo = AsyncMock(side_effect=RuntimeError("wrong file identifier"))
+    bot.send_message = AsyncMock(return_value=MagicMock(message_id=12))
+    svc = PublicationService(repo, bot, channel_id="42")
+
+    published = await svc.publish_pending(limit=1)
+
+    assert published == 1
+    bot.send_message.assert_awaited_once()
+    assert repo._store[1]["pub"] == ("42", "12")
+
+
+def test_cover_photo_input_rejects_telegram_page_and_missing_local(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("services.publication.FSInputFile", lambda path: ("file", path))
+    (tmp_path / "downloads").mkdir()
+    (tmp_path / "downloads" / "55.jpg").write_bytes(b"jpeg")
+
+    assert PublicationService._cover_photo_input("https://t.me/wakedivision/123") is None
+    assert PublicationService._cover_photo_input("downloads/missing.jpg") is None
+    assert PublicationService._cover_photo_input("downloads/55.jpg") == ("file", "downloads\\55.jpg") or (
+        PublicationService._cover_photo_input("downloads/55.jpg") == ("file", "downloads/55.jpg")
+    )
+
+
+@pytest.mark.asyncio
+async def test_publish_tries_photo_when_video_fails():
+    repo = DummyRepo()
+
+    async def list_candidates(limit=10):
+        return [
+            {
+                "id": 1,
+                "title": "T",
+                "content": "C",
+                "link": "http://x",
+                "images": "https://mywavewake.ru/static/uploads/review_media/cover.jpg",
+                "videos": "https://mywavewake.ru/static/uploads/review_media/clip.mp4",
+            }
+        ]
+
+    repo.list_publication_candidates = list_candidates  # type: ignore[method-assign]
+    bot = MagicMock()
+    bot.send_video = AsyncMock(side_effect=RuntimeError("file too big"))
+    bot.send_photo = AsyncMock(return_value=MagicMock(message_id=21))
+    bot.send_message = AsyncMock(return_value=MagicMock(message_id=22))
+    svc = PublicationService(repo, bot, channel_id="42")
+
+    published = await svc.publish_pending(limit=1)
+
+    assert published == 1
+    bot.send_photo.assert_awaited_once()
+    bot.send_message.assert_not_awaited()
+    assert repo._store[1]["pub"] == ("42", "21")
+
+
+@pytest.mark.asyncio
+async def test_publish_retries_photo_as_file_when_url_rejected(monkeypatch):
+    repo = _repo_with_cover_item()
+    calls = []
+
+    async def send_photo(**kwargs):
+        calls.append(kwargs["photo"])
+        if isinstance(kwargs["photo"], str):
+            raise RuntimeError("failed to get HTTP URL content")
+        return MagicMock(message_id=41)
+
+    async def fake_download(url, **kwargs):
+        return ("buffered", url)
+
+    monkeypatch.setattr("services.publication.http_url_as_input_file", fake_download)
+    bot = MagicMock()
+    bot.send_photo = send_photo
+    bot.send_message = AsyncMock(return_value=MagicMock(message_id=42))
+    svc = PublicationService(repo, bot, channel_id="42")
+
+    published = await svc.publish_pending(limit=1)
+
+    assert published == 1
+    assert calls[-1][0] == "buffered"
+    bot.send_message.assert_not_awaited()
+    assert repo._store[1]["pub"] == ("42", "41")
+
+
+@pytest.mark.asyncio
+async def test_publish_hydrates_media_when_item_has_none(monkeypatch):
+    repo = DummyRepo()
+    bot = MagicMock()
+    bot.send_photo = AsyncMock(return_value=MagicMock(message_id=31))
+    svc = PublicationService(repo, bot, channel_id="42")
+
+    async def fake_hydrate(item_id, item):
+        return {**item, "images": "https://mywavewake.ru/static/uploads/review_media/tg.jpg"}
+
+    svc._hydrate_media = fake_hydrate  # type: ignore[method-assign]
+
+    published = await svc.publish_pending(limit=1)
+
+    assert published == 1
+    assert bot.send_photo.await_args.kwargs["photo"].endswith("/tg.jpg")
 
 
 @pytest.mark.asyncio
@@ -335,8 +491,9 @@ def test_build_caption_merges_notes_without_author_block_when_no_merged_text():
 
     caption = PublicationService._build_caption(item, nlp)
 
-    assert "<b>Мнение автора</b>" not in caption
+    assert "Экспертное мнение" in caption
     assert "Скрестили пальцы" in caption
+    assert "Материал о вейкбординге" in caption
 
 
 def test_build_caption_uses_merged_text_as_ready_post_without_owner_meta_block():
@@ -355,7 +512,6 @@ def test_build_caption_uses_merged_text_as_ready_post_without_owner_meta_block()
 
     assert "Собрал для себя главное по этой новости" in caption
     assert "Оригинальный заголовок" not in caption
-    assert "<b>Мнение автора</b>" not in caption
     assert 'href="https://example.com/post/202">Источник</a>' in caption
     assert ">сайт</a>" in caption
     assert ">тг-админ</a>" in caption
@@ -377,6 +533,7 @@ def test_build_caption_prefers_summary_and_raw_owner_notes():
     caption = PublicationService._build_caption(item, nlp)
     assert "Короткое саммари." in caption
     assert "Мой комментарий почти как есть!!!" in caption
+    assert "Экспертное мнение" in caption
     assert "Старый rewrite" not in caption
     assert 'href="https://example.com/post/204">Источник</a>' in caption
     assert ">сайт</a>" in caption

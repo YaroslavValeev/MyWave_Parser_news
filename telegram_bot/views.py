@@ -47,6 +47,7 @@ from utils.media_utils import (
     extract_raw_feed_cover_image_url,
     iter_media_candidates,
     is_video_ref,
+    media_path_to_public_url,
 )
 from utils.owner_content import ensure_merged_owner_post, ensure_owner_editing_context, owner_editing_text, strip_author_meta_labels
 from utils.item_freshness import is_item_stale_for_review, review_max_age_days
@@ -136,6 +137,8 @@ def _is_direct_http_media(url: str, *, media_type: str) -> bool:
 
 def _local_media_path_from_public_url(url: str) -> Path | None:
     text = str(url or "").strip()
+    if text and not text.startswith(("/static/", "http://", "https://")):
+        text = media_path_to_public_url(text)
     if not text.startswith("/static/"):
         return None
     rel = text.removeprefix("/static/").lstrip("/")
@@ -186,6 +189,10 @@ def _item_raw_feed_cover_url(item: Mapping[str, Any]) -> str:
 
 
 def _collect_review_media(item: Mapping[str, Any]) -> list[tuple[str, str]]:
+    return _prefer_local_photos(_collect_review_media_raw(item))
+
+
+def _collect_review_media_raw(item: Mapping[str, Any]) -> list[tuple[str, str]]:
     media: list[tuple[str, str]] = []
     seen: set[str] = set()
     for media_type, field_name in (("photo", "images"), ("video", "videos")):
@@ -213,6 +220,20 @@ def _collect_review_media(item: Mapping[str, Any]) -> list[tuple[str, str]]:
         if len(media) >= _REVIEW_MEDIA_GROUP_LIMIT:
             return media
     return media
+
+
+def _prefer_local_photos(media: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Локальный файл и public_url сайта — одна и та же картинка; оставляем локальную."""
+    has_local_photo = any(
+        kind == "photo" and _local_media_path_from_public_url(url) is not None for kind, url in media
+    )
+    if not has_local_photo:
+        return media
+    return [
+        (kind, url)
+        for kind, url in media
+        if kind != "photo" or _local_media_path_from_public_url(url) is not None
+    ]
 
 
 def _pick_review_media(item: Mapping[str, Any]) -> tuple[str | None, str | None]:
@@ -311,7 +332,7 @@ async def _download_telegram_review_media(item: Mapping[str, Any]) -> Path | Non
         resolved = Path(path)
         return resolved if resolved.exists() else None
     except Exception as exc:  # noqa: BLE001
-        LOGGER.debug("telegram review media download failed: %s", exc)
+        LOGGER.warning("telegram review media download failed: %s", type(exc).__name__)
         return None
     finally:
         await manager.close_client()
@@ -458,7 +479,7 @@ async def _send_native_telegram_media_preview(message: Message, item: Mapping[st
             await message.answer_photo(media)
         return True
     except Exception as exc:  # noqa: BLE001
-        LOGGER.debug("native telegram review media preview failed for %s: %s", cached, exc)
+        LOGGER.warning("native telegram review media preview failed for %s: %s", cached, type(exc).__name__)
         return False
 
 
@@ -469,10 +490,27 @@ def _review_media_input(url: str) -> FSInputFile | str:
 
 async def _send_single_review_media_preview(message: Message, media_kind: str, media_url: str) -> None:
     media_input = _review_media_input(media_url)
-    if media_kind == "photo":
-        await message.answer_photo(media_input)
-    elif media_kind == "video":
-        await message.answer_video(media_input)
+    send = message.answer_video if media_kind == "video" else message.answer_photo
+    try:
+        await send(media_input)
+        return
+    except Exception as exc:  # noqa: BLE001
+        if not isinstance(media_input, str):
+            raise
+        LOGGER.warning(
+            "review media by url failed host=%s error=%s; retry as file",
+            urlparse(media_url).netloc,
+            type(exc).__name__,
+        )
+    from utils.telegram_media_input import VIDEO_MAX_BYTES, PHOTO_MAX_BYTES, http_url_as_input_file
+
+    uploaded = await http_url_as_input_file(
+        media_url,
+        max_bytes=VIDEO_MAX_BYTES if media_kind == "video" else PHOTO_MAX_BYTES,
+    )
+    if uploaded is None:
+        raise RuntimeError("review media download failed")
+    await send(uploaded)
 
 
 def _build_review_media_group(item: Mapping[str, Any]) -> list[InputMediaPhoto | InputMediaVideo]:
@@ -504,13 +542,22 @@ async def _send_review_media_preview(message: Message, item: Mapping[str, Any]) 
             await _send_single_review_media_preview(message, media_kind, media_url)
             return
         await message.answer_media_group(_build_review_media_group(item))
+        return
     except Exception as exc:  # noqa: BLE001
-        LOGGER.debug("review media preview skipped for %s: %s", media, exc)
+        LOGGER.warning("review media preview failed item_id=%s: %s", item.get("id"), type(exc).__name__)
+    if len(media) > 1:
         media_kind, media_url = media[0]
         try:
             await _send_single_review_media_preview(message, media_kind, media_url)
+            return
         except Exception as inner_exc:  # noqa: BLE001
-            LOGGER.debug("review single media fallback skipped for %s: %s", media_url, inner_exc)
+            LOGGER.warning(
+                "review single media fallback failed item_id=%s: %s",
+                item.get("id"),
+                type(inner_exc).__name__,
+            )
+    if _is_telegram_preview_candidate(item):
+        await _send_native_telegram_media_preview(message, item)
 
 
 def build_review_card_html(
@@ -580,17 +627,17 @@ def build_review_card_html(
         parts.append(f"\ncover: {html.escape(str(cover_preview)[:160])}")
         parts.append(f"\nvideo_url: {html.escape(video.video_url or '—')}")
         parts.append(f"\nembed_url: {html.escape(video.embed_url or '—')}")
-        parts.append(f"\nposter: {html.escape(video.poster_url or '—')}")
+        parts.append(f"\nпостер: {html.escape(video.poster_url or '—')}")
         if link.lower().startswith(("http://", "https://")):
             source_label = source_name or "Источник"
             parts.append(
-                f'\nsource: <a href="{html.escape(link, quote=True)}">{html.escape(source_label)}</a>'
+                f'\nисточник: <a href="{html.escape(link, quote=True)}">{html.escape(source_label)}</a>'
             )
         else:
-            parts.append(f"\nsource: {html.escape(source_name or '—')} · {html.escape(link or '—')}")
-        media_line = f"\nmedia_status: <code>{html.escape(media_diag.media_status)}</code>"
+            parts.append(f"\nисточник: {html.escape(source_name or '—')} · {html.escape(link or '—')}")
+        media_line = f"\nстатус медиа: <code>{html.escape(media_diag.media_status)}</code>"
         if media_diag.media_error:
-            media_line += f" · error: <code>{html.escape(media_diag.media_error)}</code>"
+            media_line += f" · ошибка: <code>{html.escape(media_diag.media_error)}</code>"
         parts.append(media_line)
         editorial_nlp = dict(nlp) if isinstance(nlp, Mapping) else {}
         if summary_hidden:
@@ -599,7 +646,7 @@ def build_review_card_html(
         parts.append(format_telegram_editorial_html(hints_from_item(item, editorial_nlp)))
         parts.append(web_html_from_item(item, editorial_nlp))
         if audit_logs:
-            parts.append("\n\n<b>Audit</b>")
+            parts.append("\n\n<b>Журнал действий</b>")
             for entry in audit_logs[:5]:
                 parts.append(
                     f"\n· {html.escape(str(entry.get('created_at') or '')[:19])} "
@@ -625,9 +672,10 @@ def build_review_card_html(
             parts.append(
                 f"\n\n<b>Финальная версия</b>\n{html.escape(_truncate_plain(final_text, sm_lim))}"
             )
-        elif notes:
+        if notes:
             parts.append(
-                "\n\n<i>Комментарий учтён — после сохранения будет собрана финальная версия без блока «Мнение автора».</i>"
+                "\n\n<b>💬 Экспертное мнение</b>\n"
+                f"<b>{html.escape(_truncate_plain(notes, 1200))}</b>"
             )
 
         excerpt = _truncate_plain(_html_to_plain(raw_content), ex_lim)
@@ -643,6 +691,9 @@ def build_review_card_html(
                     )
             else:
                 label = "Исходный текст (фрагмент)"
+            # Если есть экспертное мнение — ужимаем исходник, чтобы карточка не «тонула» в тексте
+            if notes:
+                excerpt = _truncate_plain(excerpt, min(ex_lim, 900))
             parts.append(f"\n\n<b>{label}</b>\n{html.escape(excerpt)}")
         else:
             parts.append(
@@ -656,18 +707,20 @@ def build_review_card_html(
                     f"\n\n<b>Оригинал (фрагмент)</b>\n{html.escape(original_excerpt)}"
                 )
 
-        summary_disp = _truncate_plain(summary_raw, sm_lim)
+        # Саммари короче, если уже есть экспертное мнение
+        sm_show = min(sm_lim, 450) if notes else sm_lim
+        summary_disp = _truncate_plain(summary_raw, sm_show)
         if summary_disp and not summary_hidden:
-            parts.append(f"\n\n<b>Саммари (NLP)</b>\n{html.escape(summary_disp)}")
+            parts.append(f"\n\n<b>Кратко (факты)</b>\n{html.escape(summary_disp)}")
         elif summary_hidden:
             parts.append(
-                "\n\n<b>Саммари (NLP)</b>\n"
+                "\n\n<b>Кратко (факты)</b>\n"
                 "<i>скрыто: в базе нет текстового контекста для проверки фактов. "
                 "Откройте «Источник» и при необходимости перегенерируйте материал вручную.</i>"
             )
         else:
             parts.append(
-                "\n\n<b>Саммари (NLP)</b>\n"
+                "\n\n<b>Кратко (факты)</b>\n"
                 "<i>ещё не сгенерировано — нажмите «Перегенерировать NLP».</i>"
             )
 
@@ -690,10 +743,19 @@ def build_review_card_html(
                 "\n\n<i>Сообщение слишком длинное для одного Telegram-текста. "
                 "Полный материал — по ссылке «Источник».</i>"
             ),
-            f"\n\n<b>Саммари (фрагмент)</b>\n{html.escape(_truncate_plain(summary_raw, 900))}",
         ]
         if notes:
-            parts_short.append(f"\n\n<i>Мнение / комментарий:</i>\n{html.escape(_truncate_plain(notes, 400))}")
+            parts_short.append(
+                f"\n\n<b>💬 Экспертное мнение</b>\n"
+                f"<b>{html.escape(_truncate_plain(notes, 600))}</b>"
+            )
+            parts_short.append(
+                f"\n\n<b>Кратко (факты)</b>\n{html.escape(_truncate_plain(summary_raw, 400))}"
+            )
+        else:
+            parts_short.append(
+                f"\n\n<b>Кратко (факты)</b>\n{html.escape(_truncate_plain(summary_raw, 900))}"
+            )
         if link:
             if link_as_anchor:
                 parts_short.append(f'\n\n<a href="{html.escape(link, quote=True)}">Источник</a>')
@@ -979,6 +1041,13 @@ async def handle_callback(repo: AsyncNewsRepository, query: CallbackQuery, callb
     if action == "approve":
         if not await _require_owner_comment(repo, query, item_id, action=action):
             return
+        await maybe_autoupload_local_cover_and_sync_sheet(
+            repo,
+            item_id,
+            user_id=query.from_user.id if query.from_user else None,
+            username=query.from_user.username if query.from_user else None,
+            trigger="owner_approve",
+        )
         await repo.update_status(item_id, "approved")
         await repo.log_event(item_id, "info", "owner_approve", _owner_log_meta(query, action))
         item = await repo.get_item(item_id)
@@ -1048,6 +1117,13 @@ async def handle_callback(repo: AsyncNewsRepository, query: CallbackQuery, callb
     if action == "publish_now":
         if not await _require_owner_comment(repo, query, item_id, action=action):
             return
+        await maybe_autoupload_local_cover_and_sync_sheet(
+            repo,
+            item_id,
+            user_id=query.from_user.id if query.from_user else None,
+            username=query.from_user.username if query.from_user else None,
+            trigger="owner_publish",
+        )
         await repo.update_schedule(item_id, None)
         await repo.update_status(item_id, "ready_to_publish")
         await repo.log_event(item_id, "info", "owner_publish_queue", _owner_log_meta(query, action))
@@ -1066,6 +1142,13 @@ async def handle_callback(repo: AsyncNewsRepository, query: CallbackQuery, callb
         if not schedule_utc:
             await query.answer("Не указано время публикации", show_alert=True)
             return
+        await maybe_autoupload_local_cover_and_sync_sheet(
+            repo,
+            item_id,
+            user_id=query.from_user.id if query.from_user else None,
+            username=query.from_user.username if query.from_user else None,
+            trigger="owner_publish_schedule",
+        )
         await repo.update_schedule(item_id, schedule_utc)
         await repo.update_status(item_id, "ready_to_publish")
         await repo.log_event(

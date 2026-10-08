@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 import logging
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Mapping, TYPE_CHECKING
 from urllib.parse import urlparse
@@ -65,6 +66,7 @@ from utils.media_utils import (
     normalize_media_ref,
 )
 from utils.telegram_editorial import TELEGRAM_HARD_CHARS
+from utils.telegram_media_input import PHOTO_MAX_BYTES, VIDEO_MAX_BYTES, http_url_as_input_file
 
 if TYPE_CHECKING:  # pragma: no cover - typing helper
     from aiogram.types import FSInputFile as AiogramFSInputFile
@@ -79,6 +81,9 @@ except Exception:  # noqa: BLE001
     FSInputFile = None  # type: ignore[assignment]
 
 LOGGER = logging.getLogger(__name__)
+
+# Telegram считает лимит 1024 по видимому тексту; len() с HTML-тегами даёт запас.
+_CAPTION_LIMIT = 1000
 
 
 def _utc_now() -> datetime:
@@ -281,33 +286,121 @@ class PublicationService:
         text = self._build_caption(item, nlp)
         cover_photo = self._extract_cover_photo(item, nlp)
         video_ref = self._extract_video_ref(item)
-        # Telegram photo captions are much shorter than plain messages.
-        use_photo = bool(cover_photo) and not video_ref and len(text) <= 900
-        use_video = bool(video_ref) and len(text) <= 900
-        if use_video:
-            method = self._bot.send_video
-        elif use_photo:
-            method = self._bot.send_photo
-        else:
-            method = self._bot.send_message
-        kwargs = {
-            "chat_id": channel_id,
-            "parse_mode": "HTML",
-        }
-        if use_video and video_ref:
-            kwargs.update({"video": video_ref, "caption": text})
-        elif use_photo and cover_photo:
-            kwargs.update({"photo": cover_photo, "caption": text})
-        else:
-            kwargs.update({"text": text, "disable_web_page_preview": False})
+        if not cover_photo and not video_ref:
+            enriched = await self._hydrate_media(item_id, item)
+            if enriched is not None:
+                cover_photo = self._extract_cover_photo(enriched, nlp)
+                video_ref = self._extract_video_ref(enriched)
 
-        result, _ = await _send_with_retry(
-            method,
+        media_attempts: list[tuple[str, Any, dict[str, Any]]] = []
+        if video_ref:
+            media_attempts.append(("video", self._bot.send_video, {"video": video_ref}))
+        if cover_photo:
+            media_attempts.append(("photo", self._bot.send_photo, {"photo": cover_photo}))
+        LOGGER.info(
+            "publication media item_id=%s kinds=%s text_len=%s",
+            item_id,
+            ",".join(kind for kind, _, _ in media_attempts) or "none",
+            len(text),
+        )
+
+        send = partial(
+            _send_with_retry,
             attempts=self._immediate_attempts,
             delay_seconds=self._immediate_delay,
-            **kwargs,
+        )
+
+        # Лимит подписи Telegram — 1024 символа; длинный пост (с экспертным
+        # мнением) уходит как медиа без подписи + отдельное текстовое сообщение.
+        fits_caption = len(text) <= _CAPTION_LIMIT
+        media_sent = False
+        async def _send_media(method, media_kwargs):
+            if fits_caption:
+                result, _ = await send(
+                    method,
+                    chat_id=channel_id,
+                    parse_mode="HTML",
+                    caption=text,
+                    **media_kwargs,
+                )
+                return result
+            await send(method, chat_id=channel_id, **media_kwargs)
+            return None
+
+        for kind, method, media_kwargs in media_attempts:
+            ref = media_kwargs[kind]
+            try:
+                result = await _send_media(method, media_kwargs)
+            except Exception as err:  # noqa: BLE001
+                cause = getattr(err, "cause", err)
+                LOGGER.warning(
+                    "publication media send failed item_id=%s kind=%s error=%s: %s",
+                    item_id,
+                    kind,
+                    type(cause).__name__,
+                    str(cause)[:200],
+                )
+                if not (isinstance(ref, str) and ref.startswith(("http://", "https://"))):
+                    continue
+                # Bot API не смог скачать URL сам — качаем Parser'ом и шлём файлом.
+                uploaded = await http_url_as_input_file(
+                    ref,
+                    max_bytes=VIDEO_MAX_BYTES if kind == "video" else PHOTO_MAX_BYTES,
+                )
+                if uploaded is None:
+                    continue
+                try:
+                    result = await _send_media(method, {kind: uploaded})
+                except Exception as retry_err:  # noqa: BLE001
+                    LOGGER.warning(
+                        "publication media file retry failed item_id=%s kind=%s error=%s",
+                        item_id,
+                        kind,
+                        type(getattr(retry_err, "cause", retry_err)).__name__,
+                    )
+                    continue
+            if result is not None:
+                return result
+            media_sent = True
+            break
+
+        result, _ = await send(
+            self._bot.send_message,
+            chat_id=channel_id,
+            parse_mode="HTML",
+            text=text,
+            disable_web_page_preview=media_sent,
         )
         return result
+
+    async def _hydrate_media(
+        self, item_id: int, item: Mapping[str, Any]
+    ) -> Mapping[str, Any] | None:
+        """Докачать медиа из источника (TG/og:image) и залить на сайт, если в item его нет."""
+        try:
+            from services.site_media_client import (
+                media_upload_configured,
+                prepare_item_media_for_raw_feed,
+            )
+
+            if not media_upload_configured():
+                return None
+            out, _ = await prepare_item_media_for_raw_feed(item_id, item)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("publication media hydrate failed item_id=%s", item_id)
+            return None
+        images = str(out.get("images") or "").strip()
+        videos = str(out.get("videos") or "").strip()
+        if (images or videos) and hasattr(self._repository, "update_item_media"):
+            try:
+                await self._repository.update_item_media(
+                    item_id,
+                    images=images or item.get("images"),
+                    videos=videos or item.get("videos"),
+                )
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("publication media persist failed item_id=%s", item_id)
+        return out
 
     async def _handle_failure(
         self,
@@ -446,6 +539,18 @@ class PublicationService:
 
     @classmethod
     def _extract_cover_photo(cls, item: Mapping[str, Any], nlp: Mapping[str, Any]) -> str | AiogramFSInputFile | None:
+        # Локальный файл (скачан media_pipeline) надёжнее URL: Bot API не нужно ничего качать.
+        for key in ("cover_image_url", "image_url", "images"):
+            for media_type, raw_candidate in iter_media_candidates(item.get(key)):
+                candidate = normalize_media_ref(raw_candidate, media_type=media_type or "image")
+                if not candidate or candidate.startswith(("http://", "https://")):
+                    continue
+                if is_video_ref(candidate, media_type=media_type):
+                    continue
+                photo = cls._cover_photo_input(candidate)
+                if photo:
+                    return photo
+
         for key in ("cover_image_url", "image_url"):
             candidate = normalize_media_ref(item.get(key), media_type="image")
             photo = cls._cover_photo_input(candidate)
@@ -492,8 +597,16 @@ class PublicationService:
                 if parsed.path.startswith("/static/"):
                     return PublicationService._cover_photo_input(parsed.path)
                 return None
+            # t.me/... — страница поста, а не файл; Telegram не примет её как фото.
+            if host in {"t.me", "telegram.me", "www.t.me"}:
+                return None
             return cover_url
-        return cover_url
+        # Локальный путь (downloads/123.jpg) нужно слать файлом, иначе Bot API
+        # считает строку file_id и отклоняет запрос.
+        path = Path(cover_url)
+        if path.is_file() and FSInputFile is not None:
+            return FSInputFile(str(path))
+        return None
 
     @staticmethod
     def _has_author_notes(nlp: Mapping[str, Any]) -> bool:
@@ -516,20 +629,28 @@ class PublicationService:
 
     @staticmethod
     def _extract_video_ref(item: Mapping[str, Any]) -> str | AiogramFSInputFile | None:
+        for raw in str(item.get("videos") or "").splitlines():
+            normalized = normalize_media_ref(raw.strip())
+            if normalized and not normalized.startswith(("http://", "https://")) and is_video_ref(normalized):
+                ref = PublicationService._cover_photo_input(normalized)
+                if ref:
+                    return ref
         for media_type, raw in iter_media_candidates(item.get("media_json")):
             if is_video_ref(raw, media_type=media_type):
-                normalized = normalize_media_ref(raw)
-                if normalized:
-                    return PublicationService._cover_photo_input(normalized) or normalized
+                ref = PublicationService._cover_photo_input(normalize_media_ref(raw))
+                if ref:
+                    return ref
         for raw in str(item.get("videos") or "").splitlines():
             normalized = normalize_media_ref(raw.strip())
             if normalized and is_video_ref(normalized):
-                return PublicationService._cover_photo_input(normalized) or normalized
+                ref = PublicationService._cover_photo_input(normalized)
+                if ref:
+                    return ref
         for media_type, raw in iter_media_candidates(item.get("raw_media")):
             if is_video_ref(raw, media_type=media_type):
-                normalized = normalize_media_ref(raw)
-                if normalized:
-                    return PublicationService._cover_photo_input(normalized) or normalized
+                ref = PublicationService._cover_photo_input(normalize_media_ref(raw))
+                if ref:
+                    return ref
         return None
 
     @staticmethod
@@ -546,12 +667,19 @@ class PublicationService:
             if body:
                 parts.append(html.escape(str(body)))
         elif summary and notes:
-            # Канон Owner: саммари + почти сырой комментарий (без LLM-rewrite),
-            # но нормализуем Markdown/артефакты одинаково, чтобы Telegram и сайт
-            # не расходились по “визуальным” маркерам (заголовки #, акцент и т.п.).
+            # Короткий факт + ярко выделенное экспертное мнение Owner.
+            short_summary = to_card_preview_text(
+                normalize_publication_text(summary, preserve_paragraphs=True),
+                max_len=520,
+            )
             parts.append(f"<b>{title}</b>")
-            parts.append(html.escape(normalize_publication_text(summary, preserve_paragraphs=True)))
-            parts.append(html.escape(normalize_publication_text(notes, preserve_paragraphs=True)))
+            if short_summary:
+                parts.append(html.escape(short_summary))
+            notes_clean = normalize_publication_text(notes, preserve_paragraphs=True)
+            parts.append(
+                "<b>💬 Экспертное мнение</b>\n"
+                f"<b>{html.escape(notes_clean)}</b>"
+            )
         elif merged_text:
             body = normalize_publication_text(merged_text, preserve_paragraphs=True)
             if body:

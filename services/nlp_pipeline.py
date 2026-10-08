@@ -37,7 +37,7 @@ async def process_nlp_queue(
 
     repo = repository or await get_repository()
     ai_client = client or await get_openai_client()
-    items = await repo.list_items_by_status(["new"], limit=batch_size)
+    items = await repo.list_items_by_status(["new"], limit=batch_size, order="DESC")
     if not items:
         return 0
 

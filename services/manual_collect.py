@@ -185,9 +185,15 @@ async def _fetch_items(
     limit: int | None = None,
     *,
     download_media: bool = True,
+    telegram_client=None,
 ) -> Tuple[list[dict], list[dict]]:
     if source.type == "telegram":
-        return await _fetch_telegram_items(source, limit, download_media=download_media)
+        return await _fetch_telegram_items(
+            source,
+            limit,
+            download_media=download_media,
+            telegram_client=telegram_client,
+        )
     if source.type == "rss":
         parser = _load_rss_parser()
         return ([_convert_raw_entry(entry, source) for entry in parser(source, [])], [])
@@ -206,27 +212,37 @@ async def _fetch_telegram_items(
     limit: int | None,
     *,
     download_media: bool = True,
+    telegram_client=None,
 ) -> Tuple[list[dict], list[dict]]:
     from utils.telegram_session import TelegramSessionManager
 
-    session_manager = TelegramSessionManager(
-        config.TELEGRAM_API_ID_USER,
-        config.TELEGRAM_API_HASH_USER,
-        config.TELEGRAM_PHONE,
-    )
-    client = await session_manager.get_client()
+    owns_client = telegram_client is None
+    session_manager = None
+    client = telegram_client
     if client is None:
-        raise RuntimeError("Не удалось инициализировать TelegramClient")
+        session_manager = TelegramSessionManager(
+            config.TELEGRAM_API_ID_USER,
+            config.TELEGRAM_API_HASH_USER,
+            config.TELEGRAM_PHONE,
+        )
+        client = await session_manager.get_client()
+    if client is None:
+        raise RuntimeError("Не удалось подключиться к Telegram (сессия или прокси)")
 
     parser_cls = _load_telethon_parser()
     parser = parser_cls(limit=limit or config.MAX_MESSAGES or DEFAULT_LIMIT)
-    contacts_parser_cls = _load_contacts_parser()
-    contacts_parser = contacts_parser_cls(client)
     items: list[dict] = []
-    async for raw in parser.parse(client, source, download_media=download_media):  # type: ignore[arg-type]
-        items.append(_convert_raw_entry(raw, source))
-    contacts = await contacts_parser.parse_contacts(source)
-    await session_manager.close_client()
+    contacts: list[dict] = []
+    try:
+        async for raw in parser.parse(client, source, download_media=download_media):  # type: ignore[arg-type]
+            items.append(_convert_raw_entry(raw, source))
+        # Контакты — отдельный тяжёлый обход; по умолчанию на полном сборе выкл.
+        if getattr(config, "COLLECT_CONTACTS_ON_FULL_PARSE", False):
+            contacts_parser_cls = _load_contacts_parser()
+            contacts = await contacts_parser_cls(client).parse_contacts(source)
+    finally:
+        if owns_client and session_manager is not None:
+            await session_manager.close_client()
     return items, contacts
 
 
@@ -247,6 +263,25 @@ def _convert_raw_entry(entry: dict, source: ManualSource) -> dict:
 
     date_str = _normalize_datetime(entry.get("created_at") or entry.get("date"))
 
+    videos_raw = entry.get("videos")
+    video_urls: list[str] = []
+    if isinstance(videos_raw, str) and videos_raw.strip():
+        video_urls = [part.strip() for part in videos_raw.splitlines() if part.strip()]
+    elif isinstance(videos_raw, (list, tuple)):
+        video_urls = [str(part).strip() for part in videos_raw if str(part).strip()]
+    # Если видео попало в raw_media вместе с фото — отделим по расширению.
+    if not video_urls and media_urls:
+        from utils.media_utils import VIDEO_EXTENSIONS
+
+        kept: list[str] = []
+        for url in media_urls:
+            lower = url.lower().split("?", 1)[0]
+            if any(lower.endswith(ext) for ext in VIDEO_EXTENSIONS):
+                video_urls.append(url)
+            else:
+                kept.append(url)
+        media_urls = kept
+
     return {
         "source": entry.get("source_name") or source.name,
         "title": entry.get("raw_title") or entry.get("title") or "(без заголовка)",
@@ -254,7 +289,8 @@ def _convert_raw_entry(entry: dict, source: ManualSource) -> dict:
         "link": _resolve_link(entry, source),
         "date": date_str,
         "images": "\n".join(media_urls) if media_urls else None,
-        "videos": None,
+        "videos": "\n".join(video_urls) if video_urls else None,
+        "cover_image_url": str(entry.get("cover_image_url") or (media_urls[0] if media_urls else "") or ""),
         "transcript": entry.get("transcript"),
         "comment": entry.get("comment"),
     }

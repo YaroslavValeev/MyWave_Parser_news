@@ -119,33 +119,47 @@ async def test_upload_cover_image_accepts_public_url_response(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_prepare_item_media_for_raw_feed_uploads_local_cover(monkeypatch, tmp_path):
+async def test_prepare_item_media_strips_telegram_cover_and_uploads_after_hydrate(
+    monkeypatch, tmp_path
+):
     _configure_upload(monkeypatch)
-    image = tmp_path / "cover.png"
-    image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"fake-png-body")
+    image = tmp_path / "hydrated.jpg"
+    image.write_bytes(b"\xff\xd8\xff\xe0" + b"fake-jpeg-body")
+
+    async def fake_hydrate(item):
+        out = dict(item)
+        out["images"] = str(image)
+        out["cover_image_url"] = ""
+        return out
 
     def fake_post(url, *, headers, data, files, timeout):
         return _Response(
-            200,
-            {"ok": True, "url": "https://mywave.ru/static/news-media/2026/04/parser-2.webp"},
+            201,
+            {
+                "ok": True,
+                "public_url": "https://mywavewake.ru/static/uploads/review_media/review_x.jpg",
+            },
         )
 
+    monkeypatch.setattr(
+        "services.telegram_media_hydrate.hydrate_item_media_from_telegram",
+        fake_hydrate,
+    )
     monkeypatch.setattr("services.site_media_client.requests.post", fake_post)
 
     item, result = await prepare_item_media_for_raw_feed(
-        2,
+        55,
         {
-            "id": 2,
-            "source": "telegram:source",
-            "link": "https://t.me/source/2",
-            "images": str(image),
+            "id": 55,
+            "link": "https://t.me/wakedivision/100",
+            "cover_image_url": "https://t.me/wakedivision/100",
+            "images": "https://t.me/wakedivision/100",
         },
     )
 
     assert result is not None and result.ok is True
-    assert item["cover_image_url"] == "https://mywave.ru/static/news-media/2026/04/parser-2.webp"
-    assert item["image_url"] == "https://mywave.ru/static/news-media/2026/04/parser-2.webp"
-    assert item["images"].splitlines()[0] == "https://mywave.ru/static/news-media/2026/04/parser-2.webp"
+    assert item["cover_image_url"].startswith("https://mywavewake.ru/static/uploads/")
+    assert "t.me" not in item["cover_image_url"]
 
 
 @pytest.mark.asyncio
@@ -268,6 +282,9 @@ async def test_maybe_autoupload_logs_on_upload_failure(monkeypatch):
 
         async def log_event(self, item_id: int, level: str, message: str, meta=None):  # noqa: ANN001
             self.events.append((level, message))
+
+        async def update_item_media(self, item_id: int, images=None, videos=None):  # noqa: ANN001
+            self.item.update({"images": images, "videos": videos})
 
     async def fake_prepare(_iid: int, item):
         return dict(item), MediaUploadResult(ok=False, error="network", status_code=500)
