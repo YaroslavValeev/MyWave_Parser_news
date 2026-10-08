@@ -6,3 +6,4 @@ scripts/deploy_editorial_release.py text eol=lf
 scripts/editorial_offline_smoke.py text eol=lf
 scripts/preview_article_summary.py text eol=lf
 scripts/repair_review_article_626.py text eol=lf
+scripts/audit_reconciled_runtime.py text eol=lf
