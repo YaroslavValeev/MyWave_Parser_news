@@ -67,7 +67,7 @@ def review_keyboard(item_id: int, *, include_publish: bool = False):
         callback_data=ReviewAction(action="add_cover", item_id=item_id).pack(),
     )
     builder.button(
-        text="🔁 Retry media",
+        text="🔁 Повторить медиа",
         callback_data=ReviewAction(action="retry_media", item_id=item_id).pack(),
     )
     if include_publish:
@@ -181,7 +181,7 @@ def owner_review_card_markup(
         callback_data=ReviewAction(action="add_cover", item_id=item_id).pack(),
     )
     b.button(
-        text="🔁 Retry media",
+        text="🔁 Повторить медиа",
         callback_data=ReviewAction(action="retry_media", item_id=item_id).pack(),
     )
     b.adjust(2)

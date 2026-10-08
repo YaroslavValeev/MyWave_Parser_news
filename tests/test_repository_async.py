@@ -2,7 +2,7 @@ import asyncio
 import os
 import tempfile
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from utils.row_utils import generate_checksum
 
 from storage.repository import initialize_database, AsyncNewsRepository, DuplicateItemError
@@ -57,10 +57,10 @@ async def test_initialize_and_crud(tmp_path):
 @pytest.mark.owner_review
 @pytest.mark.asyncio
 async def test_list_review_queue_priority(tmp_path):
-    """Сначала review, затем new при одинаковой очереди."""
-    db_file = tmp_path / "q.sqlite"
-    await initialize_database(db_file)
-    repo = AsyncNewsRepository(db_file)
+    """Сначала review, затем new; внутри статуса — сначала более свежие."""
+    db_path = tmp_path / "q.sqlite"
+    await initialize_database(db_path)
+    repo = AsyncNewsRepository(db_path)
 
     id_new = await repo.create_item(
         {
@@ -69,21 +69,33 @@ async def test_list_review_queue_priority(tmp_path):
             "content": "a",
             "link": "https://a.example",
             "status": "new",
+            "date": (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(),
         }
     )
-    id_review = await repo.create_item(
+    id_review_old = await repo.create_item(
         {
             "source": "t",
-            "title": "Review item",
+            "title": "Older review",
             "content": "b",
             "link": "https://b.example",
             "status": "review",
+            "date": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
         }
     )
-    assert id_new != id_review
+    id_review_new = await repo.create_item(
+        {
+            "source": "t",
+            "title": "Newest review",
+            "content": "c",
+            "link": "https://c.example",
+            "status": "review",
+            "date": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+        }
+    )
+    assert id_new != id_review_old != id_review_new
 
     q = await repo.list_review_queue(limit=5)
-    assert [r["id"] for r in q] == [id_review, id_new]
+    assert [r["id"] for r in q] == [id_review_new, id_review_old, id_new]
 
 
 @pytest.mark.owner_review

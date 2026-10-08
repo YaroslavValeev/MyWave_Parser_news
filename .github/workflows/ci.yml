@@ -158,3 +158,19 @@ jobs:
             tests/test_summary_preview.py \
             tests/test_review_article_repair.py \
             tests/test_publication_service.py
+          pytest -q --tb=short \
+            tests/test_media_pipeline.py \
+            tests/test_telegram_media_hydrate.py \
+            tests/test_telegram_parser_album.py \
+            tests/test_rss_media.py \
+            tests/test_rss_tag_terms.py \
+            tests/test_source_telemetry.py \
+            tests/test_repository_async.py \
+            tests/test_status_labels_ru.py \
+            tests/test_review_media.py \
+            tests/test_manual_collect.py \
+            tests/test_download_media_no_dupes.py \
+            tests/test_rss_parser_media.py \
+            tests/test_rss_collector.py \
+            tests/test_httpx_proxy_kwargs.py \
+            tests/test_config_proxy.py

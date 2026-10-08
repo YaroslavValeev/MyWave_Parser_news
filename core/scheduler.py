@@ -132,78 +132,123 @@ async def _parse_all_sources_impl() -> ParseAllSummary:
     sources, _chunk_mode = _slice_sources_for_chunk(sources_all)
     t0 = time.perf_counter()
 
-    skip_media = getattr(config, "TELEGRAM_SKIP_MEDIA_FULL_COLLECT", True)
+    skip_media = bool(getattr(config, "TELEGRAM_SKIP_MEDIA_FULL_COLLECT", False))
+    collect_contacts = bool(getattr(config, "COLLECT_CONTACTS_ON_FULL_PARSE", False))
+    LOGGER.info(
+        "parse_all_sources start: sources=%s skip_media=%s collect_contacts=%s",
+        len(sources),
+        skip_media,
+        collect_contacts,
+    )
     source_results: list[dict[str, object]] = []
-    for source in sources:
-        manual_source = ManualSource(
-            type=source.type,
-            url=source.url,
-            name=source.name or source.url,
-        )
-        tick_t0 = time.perf_counter()
+
+    # Один Telethon-клиент на весь прогон: иначе connect/close на каждый
+    # telegram-источник даёт database is locked / ProxyError и ложные сбои.
+    shared_tg = None
+    session_manager = None
+    needs_tg = any(getattr(s, "type", "") == "telegram" for s in sources)
+    if needs_tg and config.TELEGRAM_API_ID_USER and config.TELEGRAM_API_HASH_USER:
         try:
-            items, contacts = await _fetch_items(
-                manual_source,
-                limit=getattr(config, "MAX_MESSAGES", None),
-                download_media=False if manual_source.type == "telegram" and skip_media else True,
+            from utils.telegram_session import TelegramSessionManager
+
+            session_manager = TelegramSessionManager(
+                config.TELEGRAM_API_ID_USER,
+                config.TELEGRAM_API_HASH_USER,
+                config.TELEGRAM_PHONE,
             )
-        except Exception as exc:  # noqa: BLE001
+            for attempt in range(1, 4):
+                shared_tg = await session_manager.get_client()
+                if shared_tg is not None:
+                    LOGGER.info("shared Telethon client OK (attempt=%s)", attempt)
+                    break
+                LOGGER.warning("shared Telethon client None attempt=%s/3", attempt)
+                await asyncio.sleep(2 * attempt)
+            if shared_tg is None:
+                LOGGER.error(
+                    "shared Telethon client is None — telegram-источники будут "
+                    "пробовать string-session по одному (без удаления .session)"
+                )
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("не удалось создать общий Telethon-клиент")
+            shared_tg = None
+
+    try:
+        for source in sources:
+            manual_source = ManualSource(
+                type=source.type,
+                url=source.url,
+                name=source.name or source.url,
+            )
+            tick_t0 = time.perf_counter()
+            try:
+                items, contacts = await _fetch_items(
+                    manual_source,
+                    limit=getattr(config, "MAX_MESSAGES", None),
+                    download_media=False if manual_source.type == "telegram" and skip_media else True,
+                    telegram_client=shared_tg if manual_source.type == "telegram" else None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                latency_ms = (time.perf_counter() - tick_t0) * 1000.0
+                sources_failed += 1
+                LOGGER.exception("Failed to collect source %s", source.url)
+                tick = SourceTickMetrics(
+                    source_type=manual_source.type,
+                    source_name=manual_source.name,
+                    source_url=source.url,
+                    ok=False,
+                    latency_ms=latency_ms,
+                    errors=1,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                await _record_source_tick(tick)
+                source_results.append(tick.to_result_row())
+                continue
+
+            collected = len(items)
+            stats = await save_news_detailed(items) if items else None
+            saved = stats.saved if stats else 0
+            duplicates = stats.duplicates if stats else 0
+            write_errors = stats.errors if stats else 0
+            total_news_saved += saved
+            if items:
+                LOGGER.debug(
+                    "Saved %s news items from %s (%s)",
+                    saved,
+                    manual_source.name,
+                    manual_source.type,
+                )
+            if contacts:
+                stored_contacts = await save_contacts(contacts)
+                total_contacts_saved += stored_contacts
+                LOGGER.debug(
+                    "Saved %s contacts from %s", stored_contacts, manual_source.url
+                )
             latency_ms = (time.perf_counter() - tick_t0) * 1000.0
-            sources_failed += 1
-            LOGGER.exception("Failed to collect source %s", source.url)
+            tick_ok = write_errors == 0
+            if not tick_ok:
+                sources_failed += 1
             tick = SourceTickMetrics(
                 source_type=manual_source.type,
                 source_name=manual_source.name,
                 source_url=source.url,
-                ok=False,
+                ok=tick_ok,
                 latency_ms=latency_ms,
-                errors=1,
-                error=f"{type(exc).__name__}: {exc}",
+                collected=collected,
+                parsed=collected,
+                saved=saved,
+                duplicates=duplicates,
+                rejected=0,
+                errors=write_errors,
+                error="" if tick_ok else f"persist_errors={write_errors}",
             )
             await _record_source_tick(tick)
             source_results.append(tick.to_result_row())
-            continue
-
-        collected = len(items)
-        stats = await save_news_detailed(items) if items else None
-        saved = stats.saved if stats else 0
-        duplicates = stats.duplicates if stats else 0
-        write_errors = stats.errors if stats else 0
-        total_news_saved += saved
-        if items:
-            LOGGER.debug(
-                "Saved %s news items from %s (%s)",
-                saved,
-                manual_source.name,
-                manual_source.type,
-            )
-        if contacts:
-            stored_contacts = await save_contacts(contacts)
-            total_contacts_saved += stored_contacts
-            LOGGER.debug(
-                "Saved %s contacts from %s", stored_contacts, manual_source.url
-            )
-        latency_ms = (time.perf_counter() - tick_t0) * 1000.0
-        # Fetch ok; persist errors count as rejected/errors without failing the source tick.
-        tick_ok = write_errors == 0
-        if not tick_ok:
-            sources_failed += 1
-        tick = SourceTickMetrics(
-            source_type=manual_source.type,
-            source_name=manual_source.name,
-            source_url=source.url,
-            ok=tick_ok,
-            latency_ms=latency_ms,
-            collected=collected,
-            parsed=collected,
-            saved=saved,
-            duplicates=duplicates,
-            rejected=0,
-            errors=write_errors,
-            error="" if tick_ok else f"persist_errors={write_errors}",
-        )
-        await _record_source_tick(tick)
-        source_results.append(tick.to_result_row())
+    finally:
+        if session_manager is not None:
+            try:
+                await session_manager.close_client()
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("shared Telethon close failed")
 
     if getattr(config, "ENGAGEMENT_COLLECT_ENABLED", False):
         try:

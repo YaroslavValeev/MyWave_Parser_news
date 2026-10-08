@@ -171,10 +171,28 @@ class OpenAIClient:
             return {"flagged": False, "categories": {}, "skipped": True}
 
         client = await self._ensure_client()
-        result = await client.moderations.create(
-            model="omni-moderation-latest",
-            input=text,
-        )
+        try:
+            result = await client.moderations.create(
+                model="omni-moderation-latest",
+                input=text,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Частый кейс: chat/completions OK, /v1/moderations → 403 Forbidden.
+            status = getattr(exc, "status_code", None)
+            name = type(exc).__name__
+            if status == 403 or name in {"PermissionDeniedError", "AuthenticationError"}:
+                LOGGER.warning(
+                    "OpenAI moderation unavailable (%s status=%s); continue without flag",
+                    name,
+                    status,
+                )
+                return {
+                    "flagged": False,
+                    "categories": {},
+                    "skipped": True,
+                    "error": f"{name}:{status}",
+                }
+            raise
         moderation = result.results[0]
         if hasattr(moderation, "model_dump"):
             return moderation.model_dump()

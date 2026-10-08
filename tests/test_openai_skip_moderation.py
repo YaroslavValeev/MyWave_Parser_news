@@ -44,3 +44,26 @@ async def test_moderate_calls_api_when_flag_disabled():
         result = await client.moderate("ok")
     api.moderations.create.assert_awaited_once()
     assert result["flagged"] is False
+
+
+@pytest.mark.asyncio
+async def test_moderate_soft_fails_on_403():
+    api = MagicMock()
+
+    class PermissionDeniedError(Exception):
+        status_code = 403
+
+    api.moderations.create = AsyncMock(side_effect=PermissionDeniedError("Forbidden"))
+    settings = OpenAISettings(
+        api_key="sk-test",
+        text_model="gpt-4o-mini",
+        whisper_model="whisper-1",
+        image_model="gpt-image-1",
+        default_language="ru",
+    )
+    client = OpenAIClient(settings=settings, client=api)
+    with patch("nlp.openai_client.config") as cfg:
+        cfg.OPENAI_SKIP_MODERATION = False
+        result = await client.moderate("text")
+    assert result["flagged"] is False
+    assert result.get("skipped") is True

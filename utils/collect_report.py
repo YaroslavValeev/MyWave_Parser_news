@@ -75,6 +75,30 @@ def load_collect_report() -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def humanize_collect_error(raw: str | None) -> str:
+    """Технические ошибки сбора → короткие русские формулировки."""
+    text = str(raw or "").strip()
+    if not text:
+        return "неизвестная ошибка"
+    low = text.lower()
+    if "не удалось инициализировать telegramclient" in low or "telegramclient" in low:
+        return "не удалось подключиться к Telegram (сессия или прокси)"
+    if "floodwait" in low:
+        return "Telegram временно ограничил частоту запросов"
+    if "proxy" in low or "ruleset" in low:
+        return "ошибка прокси-сервера"
+    if "timeout" in low or "timed out" in low:
+        return "таймаут соединения"
+    if "authkey" in low or "unauthorized" in low:
+        return "сессия Telegram недействительна — нужна повторная авторизация"
+    if "persist_errors" in low:
+        return "ошибка записи в базу"
+    # Убираем англ. имена классов в начале: RuntimeError: ...
+    if ": " in text and text.split(":", 1)[0].endswith("Error"):
+        text = text.split(":", 1)[1].strip()
+    return text[:160]
+
+
 def format_collect_report_html(report: Mapping[str, Any] | None) -> str:
     if not report:
         return (
@@ -84,12 +108,13 @@ def format_collect_report_html(report: Mapping[str, Any] | None) -> str:
     total = int(report.get("sources_total") or 0)
     failed = int(report.get("sources_failed") or 0)
     ok = int(report.get("sources_ok") or max(0, total - failed))
-    rate = f"{(100.0 * ok / total):.0f}%" if total else "n/a"
+    rate = f"{(100.0 * ok / total):.0f}%" if total else "н/д"
+    finished = str(report.get("finished_at") or "—")[:25]
     lines = [
         "\n\n<b>Последний сбор</b>",
-        f"\nВремя (UTC): {str(report.get('finished_at') or '—')[:25]}",
-        f"\nИсточники: ок {ok}/{total} ({rate}), ошибок {failed}",
-        f"\nНовых в БД: {int(report.get('news_saved') or 0)}",
+        f"\nВремя (всемирное): {finished}",
+        f"\nИсточники: успешно {ok}/{total} ({rate}), ошибок {failed}",
+        f"\nНовых в базе: {int(report.get('news_saved') or 0)}",
         f"\nДлительность: {report.get('elapsed_seconds') or 0} с",
     ]
     rows = [row for row in (report.get("results") or []) if isinstance(row, dict)]
@@ -99,9 +124,8 @@ def format_collect_report_html(report: Mapping[str, Any] | None) -> str:
         for row in bad[:8]:
             lines.append(
                 f"\n• {row.get('name') or row.get('url')}: "
-                f"{(row.get('error') or 'error')[:120]}"
+                f"{humanize_collect_error(row.get('error'))}"
             )
-    # Краткая телеметрия по тику (Stage 1)
     with_metrics = [
         row
         for row in rows
@@ -110,13 +134,13 @@ def format_collect_report_html(report: Mapping[str, Any] | None) -> str:
         or float(row.get("latency_ms") or 0)
     ]
     if with_metrics:
-        lines.append("\n<b>Telemetry (тик):</b>")
+        lines.append("\n<b>Показатели по источникам:</b>")
         for row in with_metrics[:6]:
             lines.append(
                 f"\n• {row.get('name') or '?'}: "
-                f"col={int(row.get('collected') or 0)} "
-                f"dup={int(row.get('duplicates') or 0)} "
-                f"{float(row.get('latency_ms') or 0):.0f}ms"
+                f"собрано={int(row.get('collected') or 0)} "
+                f"дубли={int(row.get('duplicates') or 0)} "
+                f"{float(row.get('latency_ms') or 0):.0f} мс"
             )
     return "".join(lines)
 
@@ -124,6 +148,7 @@ def format_collect_report_html(report: Mapping[str, Any] | None) -> str:
 __all__ = [
     "collect_report_path",
     "format_collect_report_html",
+    "humanize_collect_error",
     "load_collect_report",
     "save_collect_report",
 ]

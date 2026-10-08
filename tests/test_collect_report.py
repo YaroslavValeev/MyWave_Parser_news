@@ -44,9 +44,11 @@ def test_save_and_format_collect_report(tmp_path, monkeypatch):
     assert data["results"][0]["latency_ms"] == 100.5
     html = format_collect_report_html(data)
     assert "bad-src" in html
-    assert "FloodWaitError" in html
-    assert "Telemetry" in html
+    assert "Показатели по источникам" in html
+    assert "собрано=" in html
+    assert "FloodWaitError" in html or "временно ограничил" in html
     assert "ok-src" in html
+    assert "Telemetry" not in html
 
 
 def test_format_collect_report_html_empty():

@@ -129,4 +129,10 @@ async def download_media(message: types.Message, download_dir: str = "downloads/
         if "cancel" in str(e).lower():
             logger.error(f"Ошибка загрузки медиа для сообщения ID {message.id}: {e}", exc_info=True)
             return False
+        logger.warning(
+            "media download failed msg_id=%s error=%s: %s",
+            getattr(message, "id", ""),
+            type(e).__name__,
+            e,
+        )
         return False

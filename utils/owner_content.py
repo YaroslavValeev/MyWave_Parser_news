@@ -23,7 +23,7 @@ LOGGER = logging.getLogger(__name__)
 
 _AUTHOR_LABEL_RE = re.compile(
     r"(?im)^\s*(Личная заметка|Мнение автора|Комментарий автора|Авторское мнение|"
-    r"Ваш комментарий|Саммари)\s*:?\s*"
+    r"Экспертное мнение|Ваш комментарий|Саммари)\s*:?\s*"
 )
 
 
@@ -39,10 +39,12 @@ def build_fallback_merged_text(
     author_notes: str,
     title: str | None = None,
     max_len: int = 3500,
+    summary_max: int = 520,
 ) -> str:
-    """Собрать пост: саммари/краткий текст + комментарий Owner почти без обработки."""
+    """Собрать пост: короткое саммари + яркое экспертное мнение Owner."""
     body = normalize_publication_text(source_text, preserve_paragraphs=True)
-    # Комментарий Owner — минимальная нормализация (без LLM и без служебных ярлыков).
+    if body and len(body) > summary_max:
+        body = to_card_preview_text(body, max_len=summary_max)
     notes = strip_author_meta_labels(author_notes)
     notes = re.sub(r"\n{3,}", "\n\n", notes).strip()
     heading = normalize_public_title(title or "", max_len=160)
@@ -52,7 +54,7 @@ def build_fallback_merged_text(
     if body:
         parts.append(body)
     if notes:
-        parts.append(notes)
+        parts.append(f"Экспертное мнение\n{notes}")
     merged = "\n\n".join(parts).strip()
     if not merged:
         return notes or body

@@ -168,6 +168,15 @@ class Config:
     ).strip()
     MEDIA_UPLOAD_TIMEOUT_SECONDS = float(os.getenv("MEDIA_UPLOAD_TIMEOUT_SECONDS", "60"))
     MEDIA_UPLOAD_MAX_BYTES = int(os.getenv("MEDIA_UPLOAD_MAX_BYTES", str(10 * 1024 * 1024)))
+    # Видео для блога (сайт: mp4/webm до 50 МБ).
+    MEDIA_UPLOAD_VIDEO_MAX_BYTES = int(
+        os.getenv("MEDIA_UPLOAD_VIDEO_MAX_BYTES", str(50 * 1024 * 1024))
+    )
+    # Фоновая материализация медиа после сбора: источник → downloads/ → сайт.
+    MEDIA_HYDRATE_ENABLED = os.getenv("MEDIA_HYDRATE_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
+    MEDIA_HYDRATE_INTERVAL_MINUTES = int(os.getenv("MEDIA_HYDRATE_INTERVAL_MINUTES", "3"))
+    MEDIA_HYDRATE_BATCH = int(os.getenv("MEDIA_HYDRATE_BATCH", "5"))
+    MEDIA_HYDRATE_MAX_ATTEMPTS = int(os.getenv("MEDIA_HYDRATE_MAX_ATTEMPTS", "3"))
     SITE_CACHE_INVALIDATE_ENDPOINT = (
         os.getenv("SITE_CACHE_INVALIDATE_ENDPOINT")
         or "/api/blog/cache/invalidate"
@@ -258,6 +267,13 @@ class Config:
     TELEGRAM_SKIP_MEDIA_FULL_COLLECT = (
         os.getenv("TELEGRAM_SKIP_MEDIA_FULL_COLLECT", "false").lower() == "true"
     )
+    # Полный /parse: собирать контакты из постов TG. По умолчанию выкл —
+    # старый sleep(2)*100 сообщений на канал давал ~50 мин на один прогон.
+    COLLECT_CONTACTS_ON_FULL_PARSE = (
+        os.getenv("COLLECT_CONTACTS_ON_FULL_PARSE", "false").lower() == "true"
+    )
+    COLLECT_CONTACTS_MESSAGE_LIMIT = int(os.getenv("COLLECT_CONTACTS_MESSAGE_LIMIT", "20"))
+    COLLECT_CONTACTS_DELAY_SECONDS = float(os.getenv("COLLECT_CONTACTS_DELAY_SECONDS", "0.05"))
     # Legacy-флаг для старого импортера. Новый TelethonParser пишет в raw_feed только прямые
     # media refs (/static/...) и никогда не использует t.me permalink как image_url.
     TELEGRAM_ARCHIVE_MEDIA_TO_DISK = (

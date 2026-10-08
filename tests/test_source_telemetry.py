@@ -17,8 +17,9 @@ def test_format_source_health_html_empty():
     from services.source_telemetry import format_source_health_html
 
     html = format_source_health_html(None)
-    assert "Source health" in html
+    assert "Состояние источников" in html
     assert "Пока нет данных" in html
+    assert "Source health" not in html
 
 
 def test_format_source_health_html_with_rows():
@@ -43,7 +44,8 @@ def test_format_source_health_html_with_rows():
         fail_streak=3,
     )
     assert "demo-feed" in html
-    assert "pipeline" in html.lower() or "Pipeline" in html
+    assert "Конвейер" in html or "норма" in html
+    assert "собрано=" in html
 
 
 def test_source_key_stable():

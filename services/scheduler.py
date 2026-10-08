@@ -64,6 +64,14 @@ class SchedulerService:
             id="process_nlp",
             replace_existing=True,
         )
+        if getattr(config, "MEDIA_HYDRATE_ENABLED", True):
+            self._scheduler.add_job(
+                self._media_hydrate_job,
+                IntervalTrigger(minutes=max(1, int(getattr(config, "MEDIA_HYDRATE_INTERVAL_MINUTES", 3)))),
+                name="media_hydrate",
+                id="media_hydrate",
+                replace_existing=True,
+            )
         self._scheduler.add_job(
             self._retry_publications_job,
             IntervalTrigger(minutes=max(1, config.RETRY_PUBLICATIONS_INTERVAL_MINUTES)),
@@ -184,6 +192,8 @@ class SchedulerService:
             if report.sources_failed:
                 await self._notify_collect_failures(report)
             await self._notify_source_health_alerts()
+            if getattr(config, "MEDIA_HYDRATE_ENABLED", True) and report.news_saved:
+                await self._media_hydrate_job()
         except ParseAllSourcesBusyError:
             LOGGER.info(
                 "collect_sources skipped: parse_all_sources already running (manual /parse or overlap)"
@@ -197,6 +207,14 @@ class SchedulerService:
             LOGGER.info("process_nlp job finished, processed=%s", processed)
         except Exception:  # noqa: BLE001
             LOGGER.exception("process_nlp job failed")
+
+    async def _media_hydrate_job(self) -> None:
+        try:
+            from services.media_pipeline import run_media_hydrate
+
+            await run_media_hydrate(self._repository)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("media_hydrate job failed")
 
     async def _retry_publications_job(self) -> None:
         try:
@@ -309,12 +327,12 @@ class SchedulerService:
             fail_names = ", ".join(verdict["fail_streak_sources"]) or "—"
             stale_names = ", ".join(verdict["stale_sources"]) or "—"
             text = (
-                "<b>Content pipeline: degraded</b>\n"
-                f"Tracked: {verdict['sources_tracked']}, "
-                f"ok recent: {verdict['sources_ok_recent']}\n"
-                f"Fail streak ≥{streak}: {fail_names}\n"
-                f"Stale/failing: {stale_names}\n"
-                "<i>process-alive ≠ Content Engine</i>"
+                "<b>Конвейер контента: есть сбои</b>\n"
+                f"Отслеживается: {verdict['sources_tracked']}, "
+                f"успешных недавно: {verdict['sources_ok_recent']}\n"
+                f"Серия ошибок ≥{streak}: {fail_names}\n"
+                f"Устаревшие/падающие: {stale_names}\n"
+                "<i>Работа процесса бота ≠ успешный сбор новостей</i>"
             )
             await self._bot.send_message(chat_id, text, parse_mode="HTML")
         except Exception:  # noqa: BLE001

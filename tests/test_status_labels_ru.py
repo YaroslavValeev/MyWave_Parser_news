@@ -14,4 +14,5 @@ def test_format_stats_uses_russian_status_labels():
     assert "deferred:" not in text
     assert "Очередь NLP" in text
     assert "Ожидают обработки" in text
-    assert "Source health" in text
+    assert "Состояние источников" in text
+    assert "Source health" not in text

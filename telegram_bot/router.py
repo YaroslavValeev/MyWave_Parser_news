@@ -620,22 +620,28 @@ def create_router(repository: AsyncNewsRepository, bot: Bot) -> Router:
                         "Итог придёт <b>одним</b> сообщением «Сбор завершён», как только обход закончится."
                     )
                 else:
-                    extra = ""
-                    if mins >= 90:
-                        extra = (
-                            "\n\nЕсли ожидали <b>несколько минут</b>, а прошли часы — "
-                            "остановите процесс (Ctrl+C) и в .env задайте "
-                            "<code>TELEGRAM_SKIP_MEDIA_FULL_COLLECT=true</code>, затем перезапуск "
-                            "(обложки Telegram будут пустыми, но t.me не пойдёт как картинка)."
+                    skip_on = bool(getattr(config, "TELEGRAM_SKIP_MEDIA_FULL_COLLECT", False))
+                    contacts_on = bool(getattr(config, "COLLECT_CONTACTS_ON_FULL_PARSE", False))
+                    if skip_on and not contacts_on:
+                        tip = (
+                            "Идут обходы Telegram-каналов через прокси (без скачивания медиа). "
+                            "Обычно 5–15 мин на полный список источников."
+                        )
+                    elif skip_on and contacts_on:
+                        tip = (
+                            "Включён сбор контактов (<code>COLLECT_CONTACTS_ON_FULL_PARSE</code>) — "
+                            "это удлиняет прогон. Для скорости поставьте "
+                            "<code>COLLECT_CONTACTS_ON_FULL_PARSE=false</code>."
+                        )
+                    else:
+                        tip = (
+                            "Долго из‑за скачивания медиа. Ускорить: "
+                            "<code>TELEGRAM_SKIP_MEDIA_FULL_COLLECT=true</code> и перезапуск бота."
                         )
                     body = (
                         f"⏳ Сбор продолжается уже около <b>{elapsed}</b>.\n"
-                        "Часто долго из‑за <b>Telegram</b> (скачивание медиа по каждому посту). "
-                        "Ускорить: <code>TELEGRAM_SKIP_MEDIA_FULL_COLLECT=true</code> "
-                        "(обложки Telegram будут пустыми) или уменьшить "
-                        "<code>TELEGRAM_MEDIA_DOWNLOAD_TIMEOUT_SECONDS</code> (по умолчанию 90). "
-                        "Итог — сообщением «Сбор завершён»."
-                        + extra
+                        f"{tip}\n"
+                        "Итог — одним сообщением «Сбор завершён»."
                     )
                 with contextlib.suppress(Exception):
                     await message.answer(body, parse_mode="HTML")
@@ -742,6 +748,23 @@ def create_router(repository: AsyncNewsRepository, bot: Bot) -> Router:
     @router.message(or_f(Command("review"), F.text == MENU_REVIEW))
     async def cmd_review(message: Message):
         await _do_review(message)
+
+    @router.message(Command("deferred"))
+    async def cmd_deferred(message: Message):
+        uid = message.from_user.id if message.from_user else None
+        if not is_bot_operator(uid):
+            await message.answer("Доступно владельцу (<code>OWNER_USER_ID</code>).", parse_mode="HTML")
+            return
+        items = await repo.list_items_by_status("deferred", limit=REVIEW_QUEUE_LIMIT, order="DESC")
+        if not items:
+            await message.answer("Отложенных материалов нет.")
+            return
+        text = format_review_queue_summary(items).replace("<b>Очередь ревью</b>", "<b>Отложенные</b>", 1)
+        text = text.replace(
+            "снова «📋 Ревью» для обновления списка.",
+            "снова /deferred для обновления списка.",
+        )
+        await message.answer(text, parse_mode="HTML", reply_markup=review_queue_keyboard(items))
 
     @router.message(Command("item"))
     async def cmd_item(message: Message, command: CommandObject):
