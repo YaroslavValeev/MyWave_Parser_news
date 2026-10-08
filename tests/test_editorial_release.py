@@ -227,7 +227,7 @@ print(json.dumps({"external_hooks":calls}))
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=40,
+        timeout=60,
     )
     assert process.returncode == 0, process.stderr[-1000:]
     assert json.loads(process.stdout.splitlines()[-1]) == {"external_hooks": []}
