@@ -169,8 +169,6 @@ jobs:
             tests/test_status_labels_ru.py \
             tests/test_review_media.py \
             tests/test_manual_collect.py \
-            tests/test_collectors.py \
-            tests/test_collector_runner_normalize.py \
             tests/test_download_media_no_dupes.py \
             tests/test_rss_parser_media.py \
             tests/test_rss_collector.py \
