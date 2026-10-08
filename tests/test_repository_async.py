@@ -2,7 +2,7 @@ import asyncio
 import os
 import tempfile
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from utils.row_utils import generate_checksum
 
 from storage.repository import initialize_database, AsyncNewsRepository, DuplicateItemError
@@ -69,7 +69,7 @@ async def test_list_review_queue_priority(tmp_path):
             "content": "a",
             "link": "https://a.example",
             "status": "new",
-            "date": "2026-09-01T10:00:00+00:00",
+            "date": (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(),
         }
     )
     id_review_old = await repo.create_item(
@@ -79,7 +79,7 @@ async def test_list_review_queue_priority(tmp_path):
             "content": "b",
             "link": "https://b.example",
             "status": "review",
-            "date": "2026-09-10T10:00:00+00:00",
+            "date": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
         }
     )
     id_review_new = await repo.create_item(
@@ -89,7 +89,7 @@ async def test_list_review_queue_priority(tmp_path):
             "content": "c",
             "link": "https://c.example",
             "status": "review",
-            "date": "2026-09-20T10:00:00+00:00",
+            "date": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
         }
     )
     assert id_new != id_review_old != id_review_new

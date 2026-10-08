@@ -24,9 +24,9 @@ def test_parse_rss_extracts_media_from_html(monkeypatch):
         entries = [entry]
 
     monkeypatch.setattr(
-        rss_parser_module,
-        "parse_feed_from_url",
-        lambda url, source_label=None: (Feed(), "ok"),
+        rss_parser_module.feedparser,
+        "parse",
+        lambda url: Feed(),
     )
 
     results = parse_rss(source, [])
