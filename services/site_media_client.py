@@ -672,11 +672,21 @@ async def maybe_autoupload_local_cover_and_sync_sheet(
     cover_changed = str(out.get("cover_image_url") or "").strip() != str(
         item.get("cover_image_url") or ""
     ).strip()
-    media_changed = (
+    media_changed = bool(
         (next_images and next_images != prev_images)
-        or next_videos != str(item.get("videos") or "").strip()
+        or (next_videos or "") != str(item.get("videos") or "").strip()
         or cover_changed
     )
+
+    hydrated_content = str(out.get("content") or "").strip()
+    if hydrated_content and not str(item.get("content") or "").strip():
+        await repo.update_item_content(item_id, hydrated_content)
+        await repo.log_event(
+            item_id,
+            "info",
+            "telegram_caption_hydrated",
+            {"trigger": trigger, "content_len": len(hydrated_content)},
+        )
 
     if media_changed:
         await repo.update_item_media(

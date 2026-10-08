@@ -1,6 +1,10 @@
 import json
 
-from collectors.telegram_parser import _has_review_payload, _merge_grouped_entries
+from collectors.telegram_parser import (
+    _finalize_entries,
+    _has_review_payload,
+    _merge_grouped_entries,
+)
 
 
 def test_merge_grouped_entries_uses_album_caption_and_all_media():
@@ -74,6 +78,37 @@ def test_empty_telegram_entry_without_text_or_media_is_not_review_payload():
             "parse_error": "",
         }
     )
+
+
+def test_album_without_downloads_keeps_caption_and_media_flag():
+    """Прод: TELEGRAM_SKIP_MEDIA_FULL_COLLECT=true — файлов нет, но альбом должен стать одной новостью."""
+    entries = [
+        {"id": "21346", "raw_content": "", "raw_media": "[]", "_telegram_grouped_id": "9", "_telegram_has_media": True},
+        {"id": "21345", "raw_content": "", "raw_media": "[]", "_telegram_grouped_id": "9", "_telegram_has_media": True},
+        {"id": "21344", "raw_content": "Улетаю на чемпионат мира", "raw_media": "[]",
+         "_telegram_grouped_id": "9", "_telegram_has_media": True},
+        {"id": "21343", "raw_content": "Обычный пост", "raw_media": "[]", "_telegram_grouped_id": ""},
+    ]
+
+    merged = _merge_grouped_entries(entries)
+
+    assert [e["id"] for e in merged] == ["21344", "21343"]
+    assert merged[0]["raw_content"] == "Улетаю на чемпионат мира"
+    assert _has_review_payload(merged[0])
+
+
+def test_finalize_drops_empty_and_private_keys():
+    entries = [
+        {"id": "1", "raw_content": "", "raw_media": "[]", "_telegram_grouped_id": "", "_telegram_has_media": False},
+        {"id": "2", "raw_content": "", "raw_media": "[]", "_telegram_grouped_id": "", "_telegram_has_media": True},
+    ]
+
+    result = _finalize_entries(entries, "https://t.me/x")
+
+    assert [e["id"] for e in result] == ["2"]
+    assert "_telegram_has_media" not in result[0]
+    assert "_telegram_grouped_id" not in result[0]
+    assert entries == []
 
 
 def test_text_only_telegram_entry_is_review_payload():

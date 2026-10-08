@@ -17,6 +17,9 @@ from utils.media_utils import VIDEO_EXTENSIONS, is_telegram_url
 
 LOGGER = logging.getLogger(__name__)
 
+# Альбом до 10 элементов → соседи в пределах ±10 id.
+_ALBUM_WINDOW = 10
+
 _TG_POST_RE = re.compile(
     r"(?:https?://)?(?:www\.)?t\.me/(?:s/)?(?P<user>[A-Za-z0-9_]+)/(?P<msg>\d+)",
     re.IGNORECASE,
@@ -98,7 +101,9 @@ async def hydrate_item_media_from_telegram(item: Mapping[str, Any]) -> dict[str,
         return out
 
     existing = _existing_download(msg_id)
-    if existing is None:
+    files: list[Path] = [existing] if existing is not None else []
+    need_caption = not str(out.get("content") or "").strip()
+    if existing is None or need_caption:
         if not config.TELEGRAM_API_ID_USER or not config.TELEGRAM_API_HASH_USER:
             LOGGER.warning(
                 "telegram media hydrate skipped: Telethon credentials missing item_id=%s",
@@ -123,23 +128,36 @@ async def hydrate_item_media_from_telegram(item: Mapping[str, Any]) -> dict[str,
         try:
             entity = await client.get_entity(entity_ref)
             message = await client.get_messages(entity, ids=msg_id)
-            if not message or not getattr(message, "media", None):
+            if not message:
                 LOGGER.info(
-                    "telegram media hydrate: no media msg_id=%s item_id=%s",
+                    "telegram media hydrate: message not found msg_id=%s item_id=%s",
                     msg_id,
                     out.get("id"),
                 )
                 return out
-            ok = await download_media_helper(message)
-            if not ok:
-                LOGGER.warning(
-                    "telegram media hydrate download failed msg_id=%s item_id=%s",
+            group = await _album_messages(client, entity, message)
+            if need_caption:
+                caption = next(
+                    (str(m.text).strip() for m in group if str(getattr(m, "text", "") or "").strip()),
+                    "",
+                )
+                if caption:
+                    out["content"] = caption
+                    LOGGER.info(
+                        "telegram caption hydrated item_id=%s msg_id=%s len=%s",
+                        out.get("id"),
+                        msg_id,
+                        len(caption),
+                    )
+            if not files:
+                files = await _download_album_media(group)
+            if not files:
+                LOGGER.info(
+                    "telegram media hydrate: no media msg_id=%s item_id=%s album=%s",
                     msg_id,
                     out.get("id"),
+                    len(group),
                 )
-                return out
-            existing = Path("downloads") / f"{msg_id}{_media_ext_for_message(message)}"
-            if not existing.is_file() or existing.stat().st_size <= 0:
                 return out
         except Exception:  # noqa: BLE001
             LOGGER.exception(
@@ -151,30 +169,74 @@ async def hydrate_item_media_from_telegram(item: Mapping[str, Any]) -> dict[str,
         finally:
             await session_manager.close_client()
 
-    ref = existing.as_posix()
-    ext = existing.suffix.lower()
-    if ext in VIDEO_EXTENSIONS:
+    for path in reversed(files):
+        _apply_local_file(out, path)
+    LOGGER.info(
+        "telegram media hydrated item_id=%s paths=%s",
+        out.get("id"),
+        ",".join(p.as_posix() for p in files),
+    )
+    return out
+
+
+def _apply_local_file(out: dict[str, Any], path: Path) -> None:
+    ref = path.as_posix()
+    if path.suffix.lower() in VIDEO_EXTENSIONS:
         prev = str(out.get("videos") or "").strip()
         lines = [part for part in prev.splitlines() if part.strip()]
         if ref not in lines:
             lines.insert(0, ref)
         out["videos"] = "\n".join(lines)
-    else:
-        prev = str(out.get("images") or "").strip()
-        lines = [part for part in prev.splitlines() if part.strip()]
-        if ref not in lines:
-            lines.insert(0, ref)
-        out["images"] = "\n".join(lines)
-        # Не оставляем t.me в cover — сайт его не скачает.
-        cover = str(out.get("cover_image_url") or "").strip()
-        if not cover or is_telegram_url(cover):
-            out["cover_image_url"] = ref
-    LOGGER.info(
-        "telegram media hydrated item_id=%s path=%s",
-        out.get("id"),
-        ref,
-    )
-    return out
+        return
+    prev = str(out.get("images") or "").strip()
+    lines = [part for part in prev.splitlines() if part.strip()]
+    if ref not in lines:
+        lines.insert(0, ref)
+    out["images"] = "\n".join(lines)
+    # Не оставляем t.me в cover — сайт его не скачает.
+    cover = str(out.get("cover_image_url") or "").strip()
+    if not cover or is_telegram_url(cover):
+        out["cover_image_url"] = ref
+
+
+async def _album_messages(client: Any, entity: Any, message: Any) -> list[Any]:
+    """Сообщение + остальные части альбома (тот же grouped_id, соседние id)."""
+    grouped_id = getattr(message, "grouped_id", None)
+    if not grouped_id:
+        return [message]
+    ids = [i for i in range(message.id - _ALBUM_WINDOW, message.id + _ALBUM_WINDOW + 1) if i > 0]
+    neighbours = await client.get_messages(entity, ids=ids)
+    group = [
+        m for m in (neighbours or [])
+        if m is not None and getattr(m, "grouped_id", None) == grouped_id
+    ]
+    group.sort(key=lambda m: m.id)
+    return group or [message]
+
+
+async def _download_album_media(group: list[Any]) -> list[Path]:
+    """Скачать первое видео и первое фото альбома (обложка + ролик)."""
+    files: list[Path] = []
+    kinds_done: set[str] = set()
+    for msg in group:
+        if not getattr(msg, "media", None) or type(msg.media).__name__ == "MessageMediaWebPage":
+            continue
+        ext = _media_ext_for_message(msg)
+        kind = "video" if ext in VIDEO_EXTENSIONS else "image"
+        if kind in kinds_done or ext == ".bin":
+            continue
+        ok = await download_media_helper(msg)
+        path = Path("downloads") / f"{msg.id}{ext}"
+        if not ok or not path.is_file() or path.stat().st_size <= 0:
+            LOGGER.warning("telegram media hydrate download failed msg_id=%s kind=%s", msg.id, kind)
+            continue
+        files.append(path)
+        kinds_done.add(kind)
+        if len(kinds_done) == 2:
+            break
+    # Фото первым: из него берётся обложка.
+    files.sort(key=lambda p: p.suffix.lower() in VIDEO_EXTENSIONS)
+    return files
 
 
 __all__ = ["hydrate_item_media_from_telegram", "_parse_telegram_post"]

@@ -71,6 +71,25 @@ async def test_pipeline_retries_failed_upload_until_limit(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pipeline_retries_legacy_done_without_media_once(monkeypatch):
+    repo = FakeRepo([{"id": 4, "images": ""}])
+    repo.logs.append((4, media_pipeline.DONE_LOG, {"has_media": False, "uploaded": False}))
+    calls = []
+
+    async def fake_autoupload(r, item_id, **kwargs):
+        calls.append(item_id)
+        return None
+
+    monkeypatch.setattr(
+        "services.site_media_client.maybe_autoupload_local_cover_and_sync_sheet", fake_autoupload
+    )
+
+    assert await media_pipeline.run_media_hydrate(repo) == 1
+    assert await media_pipeline.run_media_hydrate(repo) == 0
+    assert calls == [4]
+
+
+@pytest.mark.asyncio
 async def test_pipeline_noop_when_upload_not_configured(monkeypatch):
     monkeypatch.setattr("services.site_media_client.media_upload_configured", lambda: False)
     repo = FakeRepo([{"id": 3}])

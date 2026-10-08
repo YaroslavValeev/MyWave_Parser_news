@@ -19,6 +19,7 @@ LOGGER = logging.getLogger(__name__)
 
 DONE_LOG = "media_hydrate_done"
 FAILED_LOG = "media_hydrate_failed"
+DONE_VERSION = 2
 _STATUSES = ("new", "review", "deferred", "ready_to_publish")
 _warned_not_configured = False
 
@@ -63,9 +64,23 @@ async def hydrate_item(repo: Any, item_id: int) -> bool:
             "has_media": _has_media(item),
             "uploaded": bool(result is not None and result.ok),
             "upload_failed": upload_failed,
+            "v": DONE_VERSION,
         },
     )
     return True
+
+
+def _done_is_final(last_done: Mapping[str, Any] | None) -> bool:
+    """Отметка без медиа от старой версии конвейера (до поддержки альбомов) — повторить один раз."""
+    if not last_done:
+        return False
+    meta = last_done.get("meta") or {}
+    if meta.get("has_media"):
+        return True
+    try:
+        return int(meta.get("v") or 1) >= DONE_VERSION
+    except (TypeError, ValueError):
+        return False
 
 
 async def run_media_hydrate(repo: Any, *, batch: int | None = None) -> int:
@@ -87,7 +102,7 @@ async def run_media_hydrate(repo: Any, *, batch: int | None = None) -> int:
         if processed >= limit:
             break
         item_id = int(item["id"])
-        if await repo.get_last_log(item_id, DONE_LOG):
+        if _done_is_final(await repo.get_last_log(item_id, DONE_LOG)):
             continue
         processed += 1
         try:
