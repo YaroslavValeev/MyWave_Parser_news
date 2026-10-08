@@ -260,6 +260,9 @@ def main():
         }
     result = {
         "runtime_audit": "ok",
+        "runtime_matches_source": not (
+            files["different"] or files["missing"] or files["unsafe"]
+        ),
         "source_ref": SOURCE_REF,
         "files": files,
         "service": service,

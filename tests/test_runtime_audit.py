@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import sqlite3
 
@@ -47,3 +48,48 @@ def test_database_audit_reads_only_and_does_not_expose_content(tmp_path):
     )
     assert report["626"]["source_bound"] is False and report["626"]["publications"] == 0
     assert "private owner text" not in repr(report) and path.read_bytes() == before
+
+
+def test_database_audit_confirms_matching_article_and_nlp(tmp_path):
+    path = tmp_path / "data.db"
+    url = "https://wakeflot.ru/news/1786"
+    content, text = "Подробнее: " + url, "Текст статьи Malibu M5 M6. " * 10
+    fields = {
+        "id": 626,
+        "content": content,
+        "transcript": None,
+        "link": "https://t.me/wakeflot/3043",
+    }
+    input_sha = hashlib.sha256(
+        json.dumps(fields, ensure_ascii=False, sort_keys=True, default=str).encode()
+    ).hexdigest()
+    text_sha = hashlib.sha256(text.encode()).hexdigest()
+    source = {
+        "version": 1,
+        "requested_url": url,
+        "final_url": url,
+        "text": text,
+        "text_sha256": text_sha,
+        "input_sha256": input_sha,
+    }
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "CREATE TABLE items(id INTEGER PRIMARY KEY,status TEXT,source_context TEXT,content TEXT,transcript TEXT,link TEXT); CREATE TABLE nlp_results(item_id INTEGER,extra TEXT); CREATE TABLE publications(item_id INTEGER);"
+        )
+        db.execute(
+            "INSERT INTO items VALUES(626,'review',?,?,NULL,?)",
+            (json.dumps(source), content, fields["link"]),
+        )
+        db.execute("INSERT INTO items VALUES(649,'discarded',NULL,NULL,NULL,NULL)")
+        db.execute(
+            "INSERT INTO nlp_results VALUES(626,?)",
+            (
+                json.dumps(
+                    {"source_input_sha256": input_sha, "source_text_sha256": text_sha}
+                ),
+            ),
+        )
+    before = path.read_bytes()
+    result = AUDIT.database_state(path)["626"]
+    assert result["source_bound"] is True and result["nlp_matches_source"] is True
+    assert result["article_sha256"] == text_sha and path.read_bytes() == before
