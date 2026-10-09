@@ -31,6 +31,7 @@ PACKAGE_MANIFESTS = {
     "article-links": "c12be9cc541c6f3d113df2b2df108488856341c939bd2376133157b7f020293a",
     "summary-conditions": "e4b1aae4f82c867fa7af8d1ec404720087f41794a48a2b9f76cb5df45b884987",
     "runtime-alignment": "e9b556a65d2adc29669a665d12386d2ae82c4a8def0219cc9a25dfb602178db9",
+    "manual-final-post": "521dcf772cf7055d9e550196e8d48d4d553d0f69340949df7e44dbbca1f850df",
 }
 SAFE_ERRORS = {
     "unsafe_release_path",

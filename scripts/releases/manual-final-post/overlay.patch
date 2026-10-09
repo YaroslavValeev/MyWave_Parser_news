@@ -1,0 +1,372 @@
+diff --git a/scripts/editorial_offline_smoke.py b/scripts/editorial_offline_smoke.py
+index 86b79f8..9ecf8f4 100644
+--- a/scripts/editorial_offline_smoke.py
++++ b/scripts/editorial_offline_smoke.py
+@@ -159,6 +159,12 @@ async def run_case(db: Path, *, changed: bool):
+             user_id=1,
+             username="offline_owner",
+         )
++        snapshot = await repo.get_final_post_edit_snapshot(item_id)
++        await repo.save_manual_final_post(
++            item_id,
++            "Зимнее хранение PCM\n\nПроверю свой двигатель перед зимой. Ручная финальная правка.",
++            expected_token=snapshot["token"], user_id=1,
++        )
+         progress("owner_approval", changed=changed)
+         await handle_callback(repo, query, {"action": "approve", "item_id": item_id})
+         await handle_callback(
+@@ -179,6 +185,7 @@ async def run_case(db: Path, *, changed: bool):
+             assert (
+                 "PCM" in sent and "чемпионат" not in sent.lower() and "Проверю" in sent
+             )
++            assert "Ручная финальная правка" in sent
+     assert (await repo.get_publication_by_item(item_id) is None) == changed
+ 
+ 
+diff --git a/services/publication.py b/services/publication.py
+index 5a5ce75..b2e9055 100644
+--- a/services/publication.py
++++ b/services/publication.py
+@@ -666,6 +666,13 @@ class PublicationService:
+             parts.append(f"<b>{title}</b>")
+             if body:
+                 parts.append(html.escape(str(body)))
++        elif (
++            str(nlp.get("merged_text") or "").strip()
++            and isinstance(nlp.get("extra"), Mapping)
++            and nlp["extra"].get("owner_manual_final_text") is True
++        ):
++            # The Owner submitted the complete body: keep it verbatim and escaped.
++            parts.append(html.escape(str(nlp["merged_text"]).strip()))
+         elif summary and notes:
+             # Короткий факт + ярко выделенное экспертное мнение Owner.
+             short_summary = to_card_preview_text(
+diff --git a/storage/repository.py b/storage/repository.py
+index 3c16d6e..c697c65 100644
+--- a/storage/repository.py
++++ b/storage/repository.py
+@@ -97,6 +97,22 @@ def get_db_path(db_path: Path | str) -> str:
+     return str(Path(db_path).resolve())
+ 
+ 
++def _final_post_edit_token(item: Mapping[str, Any], nlp: Mapping[str, Any]) -> str:
++    payload = json.dumps([dict(item), dict(nlp)], sort_keys=True, ensure_ascii=False)
++    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
++
++
++def _decode_nlp_row(row: Mapping[str, Any]) -> dict[str, Any]:
++    result = dict(row)
++    for key in ("questions", "extra", "moderation"):
++        if result.get(key):
++            try:
++                result[key] = json.loads(result[key])
++            except (TypeError, json.JSONDecodeError):
++                pass
++    return result
++
++
+ class AsyncNewsRepository:
+     """Репозиторий новостей и связанных сущностей (SQLite + aiosqlite)."""
+ 
+@@ -530,23 +546,57 @@ class AsyncNewsRepository:
+             row = await cur.fetchone()
+             if not row:
+                 return None
+-            d = dict(row)
+-            if d.get("questions"):
+-                try:
+-                    d["questions"] = json.loads(d["questions"])
+-                except (TypeError, json.JSONDecodeError):
+-                    pass
+-            if d.get("extra"):
+-                try:
+-                    d["extra"] = json.loads(d["extra"])
+-                except (TypeError, json.JSONDecodeError):
+-                    pass
+-            if d.get("moderation"):
+-                try:
+-                    d["moderation"] = json.loads(d["moderation"])
+-                except (TypeError, json.JSONDecodeError):
+-                    pass
+-            return d
++            return _decode_nlp_row(row)
++
++    async def get_final_post_edit_snapshot(self, item_id: int) -> dict[str, Any]:
++        """Read the source and draft together; only unpublished review is editable."""
++        async with self._connection() as db:
++            await db.execute("BEGIN")
++            return await self._final_post_edit_snapshot(db, item_id)
++
++    async def _final_post_edit_snapshot(
++        self, db: aiosqlite.Connection, item_id: int
++    ) -> dict[str, Any]:
++        from utils.item_context import get_item_text_context, is_title_only_summary_fallback
++
++        item_row = await (await db.execute("SELECT * FROM items WHERE id=?", (item_id,))).fetchone()
++        nlp_row = await (await db.execute("SELECT * FROM nlp_results WHERE item_id=?", (item_id,))).fetchone()
++        published = await (await db.execute("SELECT 1 FROM publications WHERE item_id=?", (item_id,))).fetchone()
++        if not item_row or not nlp_row or item_row["status"] not in {"review", "deferred"} or published:
++            raise ValueError("final_post_not_editable")
++        item, raw_nlp = dict(item_row), dict(nlp_row)
++        nlp = _decode_nlp_row(raw_nlp)
++        if not get_item_text_context(item) or is_title_only_summary_fallback(item, nlp):
++            raise ValueError("final_post_source_unavailable")
++        return {"item": item, "nlp": nlp, "token": _final_post_edit_token(item, raw_nlp)}
++
++    async def save_manual_final_post(
++        self, item_id: int, text: str, *, expected_token: str,
++        user_id: int | None = None,
++    ) -> None:
++        """Replace only the final draft, atomically refusing a stale editing session."""
++        text = text.strip()
++        if not text or len(text.encode("utf-16-le")) // 2 > 3500:
++            raise ValueError("final_post_invalid_text")
++        async with self._connection() as db:
++            await db.execute("BEGIN IMMEDIATE")
++            snapshot = await self._final_post_edit_snapshot(db, item_id)
++            if snapshot["token"] != expected_token:
++                raise ValueError("final_post_changed")
++            old_extra = snapshot["nlp"].get("extra")
++            extra = dict(old_extra) if isinstance(old_extra, Mapping) else {}
++            extra["owner_manual_final_text"] = True
++            now = datetime.now(timezone.utc).isoformat()
++            await db.execute(
++                "UPDATE nlp_results SET merged_text=?, extra=?, updated_at=?, version=version+1 WHERE item_id=?",
++                (text, json.dumps(extra, ensure_ascii=False), now, item_id),
++            )
++            await db.execute(
++                "INSERT INTO logs (item_id,level,message,meta,created_at) VALUES (?,?,?,?,?)",
++                (item_id, "info", "owner_final_text_edited",
++                 json.dumps({"user_id": user_id, "chars": len(text)}, ensure_ascii=False), now),
++            )
++            await db.commit()
+ 
+     async def save_publication(self, item_id: int, channel_id: str, message_id: str) -> int:
+         now = datetime.now(timezone.utc).isoformat()
+diff --git a/telegram_bot/final_post_edit.py b/telegram_bot/final_post_edit.py
+new file mode 100644
+index 0000000..f8a60ed
+--- /dev/null
++++ b/telegram_bot/final_post_edit.py
+@@ -0,0 +1,154 @@
++"""Manual final-post replacement in Owner review; no generation or publication."""
++
++from __future__ import annotations
++
++import logging
++
++import aiosqlite
++from aiogram import F, Router
++from aiogram.fsm.context import FSMContext
++from aiogram.fsm.state import State, StatesGroup
++from aiogram.types import CallbackQuery, LinkPreviewOptions, Message
++
++from services.publication import PublicationService
++from storage.repository import AsyncNewsRepository
++from telegram_bot.access import is_bot_operator
++from telegram_bot.keyboards import AuthorDecisionAction, owner_review_card_markup
++
++LOGGER = logging.getLogger(__name__)
++
++
++class FinalPostEditForm(StatesGroup):
++    waiting_text = State()
++
++
++def register_final_post_edit(router: Router, repo: AsyncNewsRepository) -> None:
++    # Register before the generic AuthorDecisionAction and text handlers.
++    @router.callback_query(AuthorDecisionAction.filter(F.action == "edit_final"))
++    async def begin_final_post_edit(
++        query: CallbackQuery, callback_data: AuthorDecisionAction, state: FSMContext
++    ):
++        uid = query.from_user.id if query.from_user else None
++        if not is_bot_operator(uid):
++            await query.answer("Недостаточно прав.", show_alert=True)
++            return
++        if not query.message:
++            await query.answer("Откройте карточку материала снова.", show_alert=True)
++            return
++        try:
++            snapshot = await repo.get_final_post_edit_snapshot(callback_data.item_id)
++        except aiosqlite.Error:
++            LOGGER.exception(
++                "manual final post read failed item_id=%s", callback_data.item_id
++            )
++            await query.answer(
++                "Не удалось открыть текст. Попробуйте ещё раз.", show_alert=True
++            )
++            return
++        except ValueError as exc:
++            reason = (
++                "Сначала загрузите текст источника и обновите саммари."
++                if str(exc) == "final_post_source_unavailable"
++                else "Редактировать можно материал в ревью или отложенный до публикации."
++            )
++            await query.answer(reason, show_alert=True)
++            return
++        nlp = snapshot["nlp"]
++        current_text = str(nlp.get("merged_text") or nlp.get("summary") or "").strip()
++        await state.clear()
++        await state.set_state(FinalPostEditForm.waiting_text)
++        await state.update_data(
++            final_edit_item_id=callback_data.item_id, final_edit_token=snapshot["token"]
++        )
++        await query.answer()
++        await query.message.answer(
++            "Скопируйте текст ниже, отредактируйте и пришлите полный вариант одним сообщением.\n"
++            "До 3500 символов, обычный текст; абзацы сохраняются.\n"
++            "Бот сохранит вашу версию без переписывания моделью. "
++            "Ссылки внизу публикации добавляются автоматически.\n"
++            "/cancel — отмена.",
++            parse_mode=None,
++        )
++        # Never truncate the draft shown for copying.
++        for offset in range(0, len(current_text), 1800):
++            await query.message.answer(
++                current_text[offset : offset + 1800], parse_mode=None
++            )
++
++    @router.message(FinalPostEditForm.waiting_text, F.text, ~F.text.startswith("/"))
++    async def receive_final_post_edit(message: Message, state: FSMContext):
++        uid = message.from_user.id if message.from_user else None
++        if not is_bot_operator(uid):
++            await state.clear()
++            return
++        text = (message.text or "").strip()
++        if text.lower() == "отмена":
++            await state.clear()
++            await message.answer("Редактирование отменено.")
++            return
++        if not text or len(text.encode("utf-16-le")) // 2 > 3500:
++            await message.answer(
++                "Пришлите непустой полный текст до 3500 символов или /cancel."
++            )
++            return
++        data = await state.get_data()
++        item_id, token = data.get("final_edit_item_id"), data.get("final_edit_token")
++        if not item_id or not token:
++            await state.clear()
++            await message.answer(
++                "Сессия устарела. Откройте карточку и начните редактирование снова."
++            )
++            return
++        try:
++            snapshot = await repo.get_final_post_edit_snapshot(int(item_id))
++            preview = {
++                **snapshot["nlp"],
++                "merged_text": text,
++                "extra": {"owner_manual_final_text": True},
++            }
++            if PublicationService._telegram_caption_too_long(
++                PublicationService._build_caption(snapshot["item"], preview)
++            ):
++                await message.answer(
++                    "Текст со ссылками слишком длинный для Telegram. Сократите его или /cancel."
++                )
++                return
++            await repo.save_manual_final_post(
++                int(item_id), text, expected_token=token, user_id=uid
++            )
++        except ValueError:
++            await state.clear()
++            await message.answer(
++                "Материал изменился или больше недоступен для редактирования. "
++                "Ваш текст не сохранён. Откройте карточку и начните снова."
++            )
++            return
++        except aiosqlite.Error:
++            LOGGER.exception("manual final post save failed item_id=%s", item_id)
++            await message.answer(
++                "Не удалось сохранить текст. Попробуйте ещё раз или /cancel."
++            )
++            return
++        await state.clear()
++        from telegram_bot.views import build_review_card_html
++
++        # Render saved data directly: the general card path may translate sources.
++        item = await repo.get_item(int(item_id))
++        nlp = await repo.get_nlp_results(int(item_id))
++        await message.answer(
++            build_review_card_html(
++                item,
++                nlp,
++                banner="Финальный текст сохранён. Проверьте карточку перед публикацией.",
++            ),
++            parse_mode="HTML",
++            reply_markup=owner_review_card_markup(int(item_id)),
++            link_preview_options=LinkPreviewOptions(is_disabled=True),
++        )
++
++    @router.message(FinalPostEditForm.waiting_text, ~F.text)
++    async def final_post_edit_needs_text(message: Message):
++        if is_bot_operator(message.from_user.id if message.from_user else None):
++            await message.answer(
++                "Для редактирования пришлите полный текст сообщением или /cancel."
++            )
+diff --git a/telegram_bot/keyboards.py b/telegram_bot/keyboards.py
+index e4a2c39..2736489 100644
+--- a/telegram_bot/keyboards.py
++++ b/telegram_bot/keyboards.py
+@@ -119,6 +119,10 @@ def author_decision_keyboard(item_id: int):
+     """Клавиатура для финального решения автора."""
+ 
+     builder = InlineKeyboardBuilder()
++    builder.button(
++        text="✏️ Редактировать финальный пост",
++        callback_data=AuthorDecisionAction(action="edit_final", item_id=item_id).pack(),
++    )
+     builder.button(
+         text="✅ Опубликовать",
+         callback_data=AuthorDecisionAction(action="publish", item_id=item_id).pack(),
+@@ -191,6 +195,10 @@ def owner_review_card_markup(
+             callback_data=ReviewAction(action="publish_now", item_id=item_id).pack(),
+         )
+         b.adjust(1)
++    b.button(
++        text="✏️ Редактировать финальный пост",
++        callback_data=AuthorDecisionAction(action="edit_final", item_id=item_id).pack(),
++    )
+     b.button(
+         text="✏️ Переписать саммари по комментарию",
+         callback_data=AuthorDecisionAction(action="rewrite", item_id=item_id).pack(),
+diff --git a/telegram_bot/router.py b/telegram_bot/router.py
+index 5ef3e3f..5785ad2 100644
+--- a/telegram_bot/router.py
++++ b/telegram_bot/router.py
+@@ -36,6 +36,7 @@ from services.raw_feed_sync import sync_media_fields
+ from storage.repository import AsyncNewsRepository
+ from telegram_bot.client_copy import training_media_request_html
+ from telegram_bot.access import is_bot_operator
++from telegram_bot.final_post_edit import register_final_post_edit
+ from telegram_bot.views import (
+     REVIEW_QUEUE_LIMIT,
+     format_report,
+@@ -563,6 +564,8 @@ def create_router(repository: AsyncNewsRepository, bot: Bot) -> Router:
+         await state.clear()
+         await message.answer("Сценарий отменён.")
+ 
++    register_final_post_edit(router, repo)
++
+     @router.message(or_f(Command("help"), F.text == MENU_HELP))
+     async def cmd_help(message: Message):
+         await message.answer(HELP_HTML, parse_mode="HTML")
+diff --git a/telegram_bot/views.py b/telegram_bot/views.py
+index 122c582..b448302 100644
+--- a/telegram_bot/views.py
++++ b/telegram_bot/views.py
+@@ -875,6 +875,7 @@ async def _generate_owner_final_text(
+         return None
+ 
+     extra = dict(nlp.get("extra") or {}) if isinstance(nlp.get("extra"), Mapping) else {}
++    extra.pop("owner_manual_final_text", None)
+     if isinstance(nlp.get("extra"), Mapping) and nlp["extra"].get("owner_editing_text"):
+         extra["owner_editing_text"] = nlp["extra"]["owner_editing_text"]
+ 
+@@ -1294,6 +1295,7 @@ async def handle_author_rewrite(repo: AsyncNewsRepository, query: CallbackQuery,
+         extra={
+             **(nlp.get("extra") if isinstance(nlp.get("extra"), dict) else {}),
+             "owner_rewritten": True,
++            "owner_manual_final_text": False,
+         },
+         merged_text=merged_text,
+         voice_file=nlp.get("voice_file"),
