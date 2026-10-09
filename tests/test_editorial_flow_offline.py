@@ -101,6 +101,11 @@ async def test_selected_link_to_owner_review_to_publication_without_network(
         await repo.get_item(selected), await repo.get_nlp_results(selected)
     )
     assert "PCM" in card and "Чемпионат Москвы" not in card
+    snapshot = await repo.get_final_post_edit_snapshot(selected)
+    await repo.save_manual_final_post(
+        selected, "PCM: мой финальный заголовок.\n\nПроверю двигатель перед зимой. Ручная правка сохранена.",
+        expected_token=snapshot["token"], user_id=1001,
+    )
     query = MagicMock()
     query.from_user.id = 1001
     query.from_user.username = "test_owner"
@@ -126,6 +131,7 @@ async def test_selected_link_to_owner_review_to_publication_without_network(
         bot.send_photo.assert_awaited_once()
         caption = bot.send_photo.await_args.kwargs["caption"]
         assert "PCM" in caption and "Чемпионат" not in caption and "Проверю" in caption
+        assert "Ручная правка сохранена" in caption
         assert (await repo.get_item(selected))["status"] == "published"
         assert (await repo.get_publication_by_item(selected))["message_id"] == "123"
         assert (await repo.get_item(selected))["content"] == url

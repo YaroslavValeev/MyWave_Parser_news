@@ -875,6 +875,7 @@ async def _generate_owner_final_text(
         return None
 
     extra = dict(nlp.get("extra") or {}) if isinstance(nlp.get("extra"), Mapping) else {}
+    extra.pop("owner_manual_final_text", None)
     if isinstance(nlp.get("extra"), Mapping) and nlp["extra"].get("owner_editing_text"):
         extra["owner_editing_text"] = nlp["extra"]["owner_editing_text"]
 
@@ -1294,6 +1295,7 @@ async def handle_author_rewrite(repo: AsyncNewsRepository, query: CallbackQuery,
         extra={
             **(nlp.get("extra") if isinstance(nlp.get("extra"), dict) else {}),
             "owner_rewritten": True,
+            "owner_manual_final_text": False,
         },
         merged_text=merged_text,
         voice_file=nlp.get("voice_file"),

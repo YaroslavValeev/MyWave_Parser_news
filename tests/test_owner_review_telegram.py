@@ -339,7 +339,8 @@ def test_owner_review_card_markup_includes_all_prefixes_no_duplicate_blocks():
     # Одна компактная клавиатура: без второго блока «публикация/отклонить» из author_decision
     assert any(p == "rev:add_cover:7" for p in packed)
     assert any(p == "rev:retry_media:7" for p in packed)
-    assert len(packed) == 11
+    assert len(packed) == 12
+    assert "auth:edit_final:7" in packed
 
 
 @pytest.mark.owner_review

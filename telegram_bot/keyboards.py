@@ -120,6 +120,10 @@ def author_decision_keyboard(item_id: int):
 
     builder = InlineKeyboardBuilder()
     builder.button(
+        text="✏️ Редактировать финальный пост",
+        callback_data=AuthorDecisionAction(action="edit_final", item_id=item_id).pack(),
+    )
+    builder.button(
         text="✅ Опубликовать",
         callback_data=AuthorDecisionAction(action="publish", item_id=item_id).pack(),
     )
@@ -191,6 +195,10 @@ def owner_review_card_markup(
             callback_data=ReviewAction(action="publish_now", item_id=item_id).pack(),
         )
         b.adjust(1)
+    b.button(
+        text="✏️ Редактировать финальный пост",
+        callback_data=AuthorDecisionAction(action="edit_final", item_id=item_id).pack(),
+    )
     b.button(
         text="✏️ Переписать саммари по комментарию",
         callback_data=AuthorDecisionAction(action="rewrite", item_id=item_id).pack(),

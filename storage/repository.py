@@ -97,6 +97,22 @@ def get_db_path(db_path: Path | str) -> str:
     return str(Path(db_path).resolve())
 
 
+def _final_post_edit_token(item: Mapping[str, Any], nlp: Mapping[str, Any]) -> str:
+    payload = json.dumps([dict(item), dict(nlp)], sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _decode_nlp_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    result = dict(row)
+    for key in ("questions", "extra", "moderation"):
+        if result.get(key):
+            try:
+                result[key] = json.loads(result[key])
+            except (TypeError, json.JSONDecodeError):
+                pass
+    return result
+
+
 class AsyncNewsRepository:
     """Репозиторий новостей и связанных сущностей (SQLite + aiosqlite)."""
 
@@ -530,23 +546,57 @@ class AsyncNewsRepository:
             row = await cur.fetchone()
             if not row:
                 return None
-            d = dict(row)
-            if d.get("questions"):
-                try:
-                    d["questions"] = json.loads(d["questions"])
-                except (TypeError, json.JSONDecodeError):
-                    pass
-            if d.get("extra"):
-                try:
-                    d["extra"] = json.loads(d["extra"])
-                except (TypeError, json.JSONDecodeError):
-                    pass
-            if d.get("moderation"):
-                try:
-                    d["moderation"] = json.loads(d["moderation"])
-                except (TypeError, json.JSONDecodeError):
-                    pass
-            return d
+            return _decode_nlp_row(row)
+
+    async def get_final_post_edit_snapshot(self, item_id: int) -> dict[str, Any]:
+        """Read the source and draft together; only unpublished review is editable."""
+        async with self._connection() as db:
+            await db.execute("BEGIN")
+            return await self._final_post_edit_snapshot(db, item_id)
+
+    async def _final_post_edit_snapshot(
+        self, db: aiosqlite.Connection, item_id: int
+    ) -> dict[str, Any]:
+        from utils.item_context import get_item_text_context, is_title_only_summary_fallback
+
+        item_row = await (await db.execute("SELECT * FROM items WHERE id=?", (item_id,))).fetchone()
+        nlp_row = await (await db.execute("SELECT * FROM nlp_results WHERE item_id=?", (item_id,))).fetchone()
+        published = await (await db.execute("SELECT 1 FROM publications WHERE item_id=?", (item_id,))).fetchone()
+        if not item_row or not nlp_row or item_row["status"] not in {"review", "deferred"} or published:
+            raise ValueError("final_post_not_editable")
+        item, raw_nlp = dict(item_row), dict(nlp_row)
+        nlp = _decode_nlp_row(raw_nlp)
+        if not get_item_text_context(item) or is_title_only_summary_fallback(item, nlp):
+            raise ValueError("final_post_source_unavailable")
+        return {"item": item, "nlp": nlp, "token": _final_post_edit_token(item, raw_nlp)}
+
+    async def save_manual_final_post(
+        self, item_id: int, text: str, *, expected_token: str,
+        user_id: int | None = None,
+    ) -> None:
+        """Replace only the final draft, atomically refusing a stale editing session."""
+        text = text.strip()
+        if not text or len(text.encode("utf-16-le")) // 2 > 3500:
+            raise ValueError("final_post_invalid_text")
+        async with self._connection() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            snapshot = await self._final_post_edit_snapshot(db, item_id)
+            if snapshot["token"] != expected_token:
+                raise ValueError("final_post_changed")
+            old_extra = snapshot["nlp"].get("extra")
+            extra = dict(old_extra) if isinstance(old_extra, Mapping) else {}
+            extra["owner_manual_final_text"] = True
+            now = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                "UPDATE nlp_results SET merged_text=?, extra=?, updated_at=?, version=version+1 WHERE item_id=?",
+                (text, json.dumps(extra, ensure_ascii=False), now, item_id),
+            )
+            await db.execute(
+                "INSERT INTO logs (item_id,level,message,meta,created_at) VALUES (?,?,?,?,?)",
+                (item_id, "info", "owner_final_text_edited",
+                 json.dumps({"user_id": user_id, "chars": len(text)}, ensure_ascii=False), now),
+            )
+            await db.commit()
 
     async def save_publication(self, item_id: int, channel_id: str, message_id: str) -> int:
         now = datetime.now(timezone.utc).isoformat()
