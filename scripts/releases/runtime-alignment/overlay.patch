@@ -1,6 +1,8 @@
+diff --git a/collectors/telegram_parser.py b/collectors/telegram_parser.py
+index 4e3215c..420f14d 100644
 --- a/collectors/telegram_parser.py
 +++ b/collectors/telegram_parser.py
-@@ -80,6 +80,7 @@
+@@ -80,6 +80,7 @@ class TelethonParser(BaseParser):
              logger.error("Источник данных не содержит атрибут url или url пуст.")
              raise AttributeError("Источник данных должен содержать атрибут url")
  
@@ -8,7 +10,7 @@
          try:
              await self.human_delay()  # Случайная задержка перед началом
              entity = await client.get_entity(source.url)
-@@ -91,7 +92,8 @@
+@@ -91,7 +92,8 @@ class TelethonParser(BaseParser):
                      text = message.text or ""
                      media_links: list[str] = []
                      video_links: list[str] = []
@@ -18,7 +20,7 @@
                          ok = await download_media_helper(message)
                          if ok:
                              local = Path("downloads") / f"{message.id}{_media_ext_for_message(message)}"
-@@ -112,7 +114,8 @@
+@@ -112,7 +114,8 @@ class TelethonParser(BaseParser):
                          else f"{str(source.url).rstrip('/')}/{message.id}"
                      )
  
@@ -28,7 +30,7 @@
                          "id": str(message.id),
                          "source_type": "telegram",
                          "source_name": getattr(entity, 'title', ''),
-@@ -125,15 +128,18 @@
+@@ -125,15 +128,18 @@ class TelethonParser(BaseParser):
                          "raw_html": "",  # Можно добавить html-версию, если есть
                          "raw_media": json.dumps(media_links + video_links),
                          "videos": "\n".join(video_links) if video_links else "",
@@ -50,7 +52,7 @@
                          "id": str(message.id),
                          "source_type": "telegram",
                          "source_name": getattr(entity, 'title', ''),
-@@ -148,10 +154,15 @@
+@@ -148,10 +154,15 @@ class TelethonParser(BaseParser):
                          "checksum": "",
                          "parse_error": str(e),
                          "debug_info": f"msg_id={getattr(message, 'id', '')}"
@@ -67,11 +69,13 @@
              yield {
                  "id": "",
                  "source_type": "telegram",
-@@ -173,4 +184,141 @@
+@@ -173,4 +184,141 @@ class TelethonParser(BaseParser):
          """Короткая пауза между запросами (раньше 1.5–4 с раздували полный сбор)."""
          delay = random.uniform(0.25, 0.7)
          logger.debug("Задержка: %.2f сек", delay)
--        await asyncio.sleep(delay)+        await asyncio.sleep(delay)
+-        await asyncio.sleep(delay)
+\ No newline at end of file
++        await asyncio.sleep(delay)
 +
 +
 +def _message_has_real_media(message) -> bool:
@@ -208,9 +212,13 @@
 +            len(batch) - len(merged),
 +            len(merged) - len(result),
 +        )
-+    return result--- a/requirements.txt
++    return result
+\ No newline at end of file
+diff --git a/requirements.txt b/requirements.txt
+index 7a6d03e..7cbda36 100644
+--- a/requirements.txt
 +++ b/requirements.txt
-@@ -51,7 +51,8 @@
+@@ -51,7 +51,8 @@ sgmllib3k==1.0.0
  selectolax
  sniffio==1.3.1
  soupsieve==2.6
@@ -220,6 +228,8 @@
  tqdm==4.67.1
  typing_extensions==4.12.2
  urllib3==2.3.0
+diff --git a/services/maintenance.py b/services/maintenance.py
+index 6973c8b..20ebba4 100644
 --- a/services/maintenance.py
 +++ b/services/maintenance.py
 @@ -1,10 +1,13 @@
@@ -237,7 +247,7 @@
  from pathlib import Path
  
  from config.settings import config
-@@ -15,21 +18,34 @@
+@@ -15,21 +18,34 @@ LOGGER = logging.getLogger(__name__)
  _MEDIA_SUFFIXES = {ext.lower() for ext in (*IMAGE_EXTENSIONS, *VIDEO_EXTENSIONS)}
  
  
@@ -276,7 +286,7 @@
              stat = path.stat()
              if stat.st_mtime >= cutoff:
                  continue
-@@ -37,8 +53,50 @@
+@@ -37,10 +53,52 @@ def cleanup_downloads(root: Path | str = "downloads", *, days: int) -> tuple[int
              removed += 1
              freed += stat.st_size
          except OSError as exc:
@@ -285,8 +295,8 @@
 +                "downloads cleanup skip path=%s error=%s", path, type(exc).__name__
 +            )
      return removed, freed
-+
-+
+ 
+ 
 +def referenced_downloads(db_path, root="downloads") -> set[Path]:
 +    """Read the reference inventory; failure must prevent cleanup."""
 +    base = Path(root).resolve()
@@ -325,10 +335,12 @@
 +            if value:
 +                add(json.loads(value))
 +    return found
- 
- 
++
++
  def backup_database(
-@@ -54,22 +112,40 @@
+     db_path: Path | str,
+     dest_dir: Path | str,
+@@ -54,22 +112,40 @@ def backup_database(
          LOGGER.warning("db backup skipped: %s not found", src)
          return None
      dest = Path(dest_dir)
@@ -371,7 +383,7 @@
              old.unlink()
          except OSError:
              LOGGER.warning("db backup rotate failed path=%s", old)
-@@ -77,8 +153,25 @@
+@@ -77,8 +153,25 @@ def backup_database(
  
  
  def run_maintenance() -> dict[str, object]:
@@ -399,9 +411,11 @@
      result = {
          "downloads_removed": removed,
          "downloads_freed_mb": round(freed / 1024 / 1024, 1),
+diff --git a/services/media_pipeline.py b/services/media_pipeline.py
+index 4c0a6f6..b367a8d 100644
 --- a/services/media_pipeline.py
 +++ b/services/media_pipeline.py
-@@ -19,6 +19,7 @@
+@@ -19,6 +19,7 @@ LOGGER = logging.getLogger(__name__)
  
  DONE_LOG = "media_hydrate_done"
  FAILED_LOG = "media_hydrate_failed"
@@ -409,7 +423,7 @@
  _STATUSES = ("new", "review", "deferred", "ready_to_publish")
  _warned_not_configured = False
  
-@@ -63,9 +64,23 @@
+@@ -63,11 +64,25 @@ async def hydrate_item(repo: Any, item_id: int) -> bool:
              "has_media": _has_media(item),
              "uploaded": bool(result is not None and result.ok),
              "upload_failed": upload_failed,
@@ -417,8 +431,8 @@
          },
      )
      return True
-+
-+
+ 
+ 
 +def _done_is_final(last_done: Mapping[str, Any] | None) -> bool:
 +    """Отметка без медиа от старой версии конвейера (до поддержки альбомов) — повторить один раз."""
 +    if not last_done:
@@ -430,10 +444,12 @@
 +        return int(meta.get("v") or 1) >= DONE_VERSION
 +    except (TypeError, ValueError):
 +        return False
- 
- 
++
++
  async def run_media_hydrate(repo: Any, *, batch: int | None = None) -> int:
-@@ -87,7 +102,7 @@
+     """Обработать до ``batch`` свежих новостей без материализованного медиа."""
+     from services.site_media_client import media_upload_configured
+@@ -87,7 +102,7 @@ async def run_media_hydrate(repo: Any, *, batch: int | None = None) -> int:
          if processed >= limit:
              break
          item_id = int(item["id"])
@@ -442,9 +458,11 @@
              continue
          processed += 1
          try:
+diff --git a/services/site_media_client.py b/services/site_media_client.py
+index 757e770..2653718 100644
 --- a/services/site_media_client.py
 +++ b/services/site_media_client.py
-@@ -672,11 +672,21 @@
+@@ -672,12 +672,22 @@ async def maybe_autoupload_local_cover_and_sync_sheet(
      cover_changed = str(out.get("cover_image_url") or "").strip() != str(
          item.get("cover_image_url") or ""
      ).strip()
@@ -455,7 +473,7 @@
 +        or (next_videos or "") != str(item.get("videos") or "").strip()
          or cover_changed
      )
-+
+ 
 +    hydrated_content = str(out.get("content") or "").strip()
 +    if hydrated_content and not str(item.get("content") or "").strip():
 +        await repo.update_item_content(item_id, hydrated_content)
@@ -465,22 +483,25 @@
 +            "telegram_caption_hydrated",
 +            {"trigger": trigger, "content_len": len(hydrated_content)},
 +        )
- 
++
      if media_changed:
          await repo.update_item_media(
+             item_id,
+diff --git a/services/telegram_media_hydrate.py b/services/telegram_media_hydrate.py
+index d3f58e7..ce69a72 100644
 --- a/services/telegram_media_hydrate.py
 +++ b/services/telegram_media_hydrate.py
-@@ -16,6 +16,9 @@
- from utils.media_utils import VIDEO_EXTENSIONS, is_telegram_url
+@@ -17,6 +17,9 @@ from utils.media_utils import VIDEO_EXTENSIONS, is_telegram_url
  
  LOGGER = logging.getLogger(__name__)
-+
+ 
 +# Альбом до 10 элементов → соседи в пределах ±10 id.
 +_ALBUM_WINDOW = 10
- 
++
  _TG_POST_RE = re.compile(
      r"(?:https?://)?(?:www\.)?t\.me/(?:s/)?(?P<user>[A-Za-z0-9_]+)/(?P<msg>\d+)",
-@@ -98,7 +101,9 @@
+     re.IGNORECASE,
+@@ -98,7 +101,9 @@ async def hydrate_item_media_from_telegram(item: Mapping[str, Any]) -> dict[str,
          return out
  
      existing = _existing_download(msg_id)
@@ -491,7 +512,7 @@
          if not config.TELEGRAM_API_ID_USER or not config.TELEGRAM_API_HASH_USER:
              LOGGER.warning(
                  "telegram media hydrate skipped: Telethon credentials missing item_id=%s",
-@@ -123,23 +128,36 @@
+@@ -123,24 +128,37 @@ async def hydrate_item_media_from_telegram(item: Mapping[str, Any]) -> dict[str,
          try:
              entity = await client.get_entity(entity_ref)
              message = await client.get_messages(entity, ids=msg_id)
@@ -531,13 +552,14 @@
                      out.get("id"),
 +                    len(group),
                  )
--                return out
+                 return out
 -            existing = Path("downloads") / f"{msg_id}{_media_ext_for_message(message)}"
 -            if not existing.is_file() or existing.stat().st_size <= 0:
-                 return out
+-                return out
          except Exception:  # noqa: BLE001
              LOGGER.exception(
-@@ -151,30 +169,74 @@
+                 "telegram media hydrate error item_id=%s msg_id=%s",
+@@ -151,30 +169,74 @@ async def hydrate_item_media_from_telegram(item: Mapping[str, Any]) -> dict[str,
          finally:
              await session_manager.close_client()
  
@@ -631,9 +653,11 @@
  
  
  __all__ = ["hydrate_item_media_from_telegram", "_parse_telegram_post"]
+diff --git a/utils/helpers.py b/utils/helpers.py
+index 11399e6..ece6381 100644
 --- a/utils/helpers.py
 +++ b/utils/helpers.py
-@@ -129,4 +129,10 @@
+@@ -129,4 +129,10 @@ async def download_media(message: types.Message, download_dir: str = "downloads/
          if "cancel" in str(e).lower():
              logger.error(f"Ошибка загрузки медиа для сообщения ID {message.id}: {e}", exc_info=True)
              return False

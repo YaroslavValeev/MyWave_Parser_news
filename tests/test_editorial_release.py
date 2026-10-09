@@ -322,6 +322,31 @@ def test_alignment_package_matches_audited_seven_files_and_guards_all_others():
     assert set(manifest["before"]) == set(manifest["after"])
 
 
+def test_alignment_patch_recreates_audited_before_and_applies_forward(tmp_path):
+    from scripts.audit_reconciled_runtime import EXPECTED
+
+    root, stage = tmp_path / "server", tmp_path / "stage"
+    root.mkdir()
+    stage.mkdir()
+    repository = SCRIPT.parents[1]
+    directory = SCRIPT.parent / "releases/runtime-alignment"
+    manifest = json.loads((directory / "manifest.json").read_bytes())
+    patch = (directory / "overlay.patch").read_bytes()
+    for name in (*EXPECTED, "scripts/editorial_offline_smoke.py"):
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(RELEASE.lf((repository / name).read_bytes()))
+    patch_path = tmp_path / "overlay.patch"
+    patch_path.write_bytes(patch)
+    RELEASE.run(["git", "apply", "--reverse", str(patch_path)], cwd=root)
+    RELEASE.verify(root, manifest["before"])
+    before = {name: (root / name).read_bytes() for name in manifest["before"]}
+    prepared = RELEASE.prepare(root, stage, manifest, patch)
+    assert set(prepared) == set(manifest["after"])
+    assert all((root / name).read_bytes() == raw for name, raw in before.items())
+    RELEASE.verify(stage, manifest["after"])
+
+
 def add_review_item(db_path):
     with sqlite3.connect(db_path) as db:
         db.execute("INSERT INTO items VALUES(626,'review','bound source')")

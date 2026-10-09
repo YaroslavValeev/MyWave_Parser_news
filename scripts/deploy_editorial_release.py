@@ -30,7 +30,7 @@ PACKAGE_MANIFESTS = {
     "editorial-4o-mini": MANIFEST_SHA256,
     "article-links": "c12be9cc541c6f3d113df2b2df108488856341c939bd2376133157b7f020293a",
     "summary-conditions": "e4b1aae4f82c867fa7af8d1ec404720087f41794a48a2b9f76cb5df45b884987",
-    "runtime-alignment": "df864e03cd545cafcc5e2121c19fa66b72805bdce0f6ef383097c4e898106dbb",
+    "runtime-alignment": "e9b556a65d2adc29669a665d12386d2ae82c4a8def0219cc9a25dfb602178db9",
 }
 SAFE_ERRORS = {
     "unsafe_release_path",
