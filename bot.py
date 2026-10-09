@@ -1,3 +1,4 @@
+# DEPRECATED: use bot_aiogram.py (see docs/LEGACY_DEPRECATED.md)
 import asyncio
 import logging
 import signal
@@ -35,7 +36,6 @@ from utils.telegram_session import TelegramSessionManager#
 from utils.helpers import clean_text, extract_youtube_video_id
 from storage.sources import list_sources
 from config.settings import config
-from collectors.telegram_parser import download_media
 from telegram_rate_limiter import safe_send_message, RateLimiter
 from utils.telegram_session import TelegramSessionManager
 # P0: "utils/import asyncio.py" (с пробелом) импортируется через shim utils/import_asyncio.py
@@ -712,29 +712,6 @@ async def download_media(client, message):
     except Exception as e:
         logger.error(f"Ошибка при скачивании медиа: {e}")
         return None, None
-    except Exception as e:
-        logger.warning(f"Неизвестный тип ссылки: {url}")
-        return "Не удалось определить тип ссылки. Поддерживаются: Telegram, YouTube, RSS, сайты."
-    
-        if not data:
-            return "Не удалось получить данные по ссылке."
-        # Анализируем через GPT каждую новость
-        for item in data:
-            item['expert_opinion'] = await ask_gpt(item.get('raw_content', ''))
-            # Генерируем checksum и id, валидируем
-            if 'checksum' not in item or not item['checksum']:
-                item['checksum'] = generate_checksum(item)
-            if 'id' not in item or not item['id']:
-                item['id'] = item['checksum']
-        # Сохраняем в Google Sheets (raw_feed) только валидные строки
-        all_data = {k: [] for k in import_asyncio.SHEET_COLUMNS.keys()}
-        all_data['raw_feed'].extend([item for item in data if validate_raw_row(item)])
-        await import_asyncio.auto_save_to_sheets(doc, all_data)
-        logger.info(f"Ссылка обработана и сохранена: {url}")
-        return f"Ссылка успешно обработана и сохранена: {url}"
-    except Exception as e:
-        logger.error(f"Ошибка при обработке ссылки: {e}", exc_info=True)
-        return f"Ошибка при обработке ссылки: {e}"
 
 # === Пример обработчика сообщений Telegram-бота (aiogram/Telethon) ===
 # Ниже пример для aiogram. Для Telethon используйте аналогичный подход.

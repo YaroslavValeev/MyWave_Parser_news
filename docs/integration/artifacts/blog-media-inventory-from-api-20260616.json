@@ -1,0 +1,234 @@
+{
+  "counts": {
+    "review_media": 13,
+    "place1logo": 11,
+    "external": 7
+  },
+  "rows": {
+    "review_media": [
+      {
+        "idx": 12,
+        "slug": "уважаемые-коллеги-0e3a37",
+        "title": "Уважаемые коллеги!",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170115_adabf7e1023a.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260505_170115_adabf7e1023a.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 13,
+        "slug": "вебинар-профессиональное-образование-в-серфинге-d82118",
+        "title": "ВЕБИНАР Профессиональное образование в сёрфинге",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170110_a9336ef014a1.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260505_170110_a9336ef014a1.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 14,
+        "slug": "делимся-актуальным-списком-каналов-региональных-федераций-серфинга-по-всей-россии-f0dd4a",
+        "title": "Делимся актуальным списком каналов региональных федераций серфинга по всей России!",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260506_091734_291cadc78ba3.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260506_091734_291cadc78ba3.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 15,
+        "slug": "календарь-спортивных-мероприятий-российской-федерации-серфинга-на-сезон-2026-9701a1",
+        "title": "📅 Календарь спортивных мероприятий Российской федерации серфинга на сезон 2026",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170102_1f39cd4cd258.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260505_170102_1f39cd4cd258.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 16,
+        "slug": "пост-из-провейксерф-проект-о-вейксерфинге-c08268",
+        "title": "Пост из Провейксерф || Проект о вейксерфинге",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170109_3b9417a1465b.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260505_170109_3b9417a1465b.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 18,
+        "slug": "тренировочные-сборы-в-юар-проходили-также-при-поддержке-партнера-российской-федерации-серфинга-безалкогольного-лагера-8d9a0a",
+        "title": "Тренировочные сборы в ЮАР проходили также при поддержке партнера Российской федерации серфинга — безалкогольного лагера…",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260425_180507_8f47bceb9d81.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260425_180507_8f47bceb9d81.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 21,
+        "slug": "22-апреля-в-москве-состоялся-форум-sport-b2b-в-рамках-которого-президент-федерации-воднолыжного-спорта-россии-70feb6",
+        "title": "22 апреля в Москве состоялся форум «Sport B2B», в рамках которого Президент Федерации воднолыжного спорта России…",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170114_7278a093d7c4.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260505_170114_7278a093d7c4.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 24,
+        "slug": "уважаемые-коллеги-d1ee59",
+        "title": "Уважаемые коллеги!",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260423_122915_b6d68db194f0.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260423_122915_b6d68db194f0.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 25,
+        "slug": "готовимся-проверяем-малышек-после-зимы-fb508e",
+        "title": "Готовимся проверяем малышек после зимы",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170121_c193cc37be59.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260505_170121_c193cc37be59.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 26,
+        "slug": "международная-федерация-воднолыжного-спорта-и-вейкборда-international-waterski-wakeboard-federation-утвердила-и-3e313b",
+        "title": "Международная федерация воднолыжного спорта и вейкборда - International Waterski & Wakeboard Federation - утвердила и…",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170122_a1a68b2395bb.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260505_170122_a1a68b2395bb.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 27,
+        "slug": "пост-из-wakedivision-c73dfe",
+        "title": "Пост из WakeDivision",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170123_f717d2a27bd5.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260505_170123_f717d2a27bd5.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 28,
+        "slug": "пост-из-wakedivision-0e5566",
+        "title": "Пост из WakeDivision",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170126_6b9ce8ca1616.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260505_170126_6b9ce8ca1616.jpg",
+        "prod_http": 404
+      },
+      {
+        "idx": 29,
+        "slug": "пост-из-wakediary-82965d",
+        "title": "Пост из Wakediary",
+        "old_cover": "http://127.0.0.1:5000/static/uploads/review_media/review_20260505_170128_ce5fccebdb07.jpg",
+        "prod_path": "/static/uploads/review_media/review_20260505_170128_ce5fccebdb07.jpg",
+        "prod_http": 404
+      }
+    ],
+    "place1logo": [
+      {
+        "idx": 1,
+        "slug": "альфа-банк-серф-кап-2026-открыта-регистрация-на-карнавальный-заезд-и-заезды-для-любителей-7f6ffa",
+        "title": "🏄 АЛЬФА-БАНК СЕРФ КАП 2026 — ОТКРЫТА РЕГИСТРАЦИЯ НА КАРНАВАЛЬНЫЙ ЗАЕЗД И ЗАЕЗДЫ ДЛЯ ЛЮБИТЕЛЕЙ!",
+        "cover": "/static/images/Place1Logo.png"
+      },
+      {
+        "idx": 2,
+        "slug": "21-июня-в-музее-заповеднике-царицыно-в-москве-состоится-12-й-международный-день-йоги-в-россии-одно-из-самых-2a38a4",
+        "title": "21 июня в музее-заповеднике «Царицыно» в Москве состоится 12-й Международный день йоги в России — одно из самых…",
+        "cover": "/static/images/Place1Logo.png"
+      },
+      {
+        "idx": 4,
+        "slug": "18-19-июня-на-базе-вейксерф-клуба-wakedivision-сбер-сити-и-сап-станции-gosup-сбер-сити-состоится-кубок-москвы-по-093f65",
+        "title": "18-19 июня,на базе вейксерф клуба Wakedivision Сбер Сити и сап-станции Gosup Сбер Сити состоится кубок Москвы по…",
+        "cover": "/static/images/Place1Logo.png"
+      },
+      {
+        "idx": 5,
+        "slug": "весна-и-лето-прекрасные-времена-года-но-для-некоторых-спортсменов-период-цветения-становится-настоящим-испытанием-72b32a",
+        "title": "🤧Весна и лето - прекрасные времена года, но для некоторых спортсменов период цветения становится настоящим испытанием…",
+        "cover": "/static/images/Place1Logo.png"
+      },
+      {
+        "idx": 6,
+        "slug": "потихоньку-раскачиваем-акваторию-и-ждем-любимых-серферов-d64592",
+        "title": "Потихоньку раскачиваем акваторию и ждём любимых серферов😜",
+        "cover": "/static/images/Place1Logo.png"
+      },
+      {
+        "idx": 7,
+        "slug": "дорогие-любименькие-новый-сезон-ура-1c383c",
+        "title": "Дорогие любименькие, новый сезон! Ура!!",
+        "cover": "/static/images/Place1Logo.png"
+      },
+      {
+        "idx": 9,
+        "slug": "с-днем-победы-309928",
+        "title": "С Днём Победы!",
+        "cover": "/static/images/Place1Logo.png"
+      },
+      {
+        "idx": 11,
+        "slug": "wsws-centurion-wake-surf-japan-open-2025-event-announcement-46771d",
+        "title": "WSWS Centurion Wake Surf Japan Open 2025 – Event Announcement",
+        "cover": "/static/images/Place1Logo.png"
+      },
+      {
+        "idx": 17,
+        "slug": "ждемс-7f53f8",
+        "title": "Ждемс👀",
+        "cover": "/static/images/Place1Logo.png"
+      },
+      {
+        "idx": 22,
+        "slug": "начинаем-собирать-календарь-международных-соревнований-2026-e56b06",
+        "title": "Начинаем собирать календарь международных соревнований 2026",
+        "cover": "/static/images/Place1Logo.png"
+      },
+      {
+        "idx": 23,
+        "slug": "федерация-водных-лыж-и-вэйкборда-опубликовала-рассписание-соревнований-в-этом-сезоне-6c1da8",
+        "title": "Федерация водных лыж и вэйкборда опубликовала рассписание соревнований в этом сезоне.",
+        "cover": "/static/images/Place1Logo.png"
+      }
+    ],
+    "external": [
+      {
+        "idx": 3,
+        "slug": "pleasurecraft-marine-lake-murray-clean-up-68d30a",
+        "title": "Pleasurecraft Marine Lake Murray Clean-Up",
+        "url": "https://www.wakeboardingmag.com/wp-content/uploads/2026/06/WKB626-Pleasurecraftcleanup.jpg?w=300",
+        "http": 200
+      },
+      {
+        "idx": 8,
+        "slug": "mastercraft-benefits-st-jude-children-s-research-hospital-with-surf-to-save-lives-072b03",
+        "title": "MasterCraft Benefits St. Jude Children’s Research Hospital With Surf to Save Lives",
+        "url": "https://www.wakeboardingmag.com/wp-content/uploads/2026/05/WKB526-MC-073-STSL-Set3-1024x768.jpg",
+        "http": 404
+      },
+      {
+        "idx": 10,
+        "slug": "voltaic-marine-enters-the-game-with-the-aew24-7a6741",
+        "title": "Voltaic Marine Enters the Game with the AEW24",
+        "url": "https://unleashedwakemag.com/wp-content/uploads/2026/01/WSP1225-Voltaic-Specs-1536x845-1-1024x563.jpg",
+        "http": 200
+      },
+      {
+        "idx": 19,
+        "slug": "watersports-industry-association-wsia-fights-wakeboat-and-wakesurfing-restrictions-nationwide-4fa7c6",
+        "title": "Watersports Industry Association (WSIA) Fights Wakeboat and Wakesurfing Restrictions Nationwide",
+        "url": "https://www.wakeboardingmag.com/wp-content/uploads/2026/03/WKB326-WSIA-Summit-1024x768.jpg",
+        "http": 200
+      },
+      {
+        "idx": 20,
+        "slug": "mastercraft-s-let-her-rip-campaign-returns-in-2026-363763",
+        "title": "MasterCraft’s “Let Her Rip” Campaign Returns in 2026",
+        "url": "https://www.wakeboardingmag.com/wp-content/uploads/2026/03/WKB326-Let-Her-rip-triple.jpg",
+        "http": 200
+      },
+      {
+        "idx": 30,
+        "slug": "brisbane-2032-le-wake-cable-peut-il-réussir-son-entrée-dans-l-arène-olympique-ff49cc",
+        "title": "BRISBANE 2032 : LE WAKE CABLE PEUT-IL RÉUSSIR SON ENTRÉE DANS L’ARÈNE OLYMPIQUE",
+        "url": "https://unleashedwakemag.com/wp-content/uploads/2019/06/logo_h_couleur.png",
+        "http": 200
+      },
+      {
+        "idx": 31,
+        "slug": "2026-mastercraft-wwa-rider-experience-schedule-01e956",
+        "title": "2026 MasterCraft WWA Rider Experience Schedule",
+        "url": "https://www.thewwa.com/wp-content/uploads/2026/02/WWA_EmailHeader_Desktop_600x200.png",
+        "http": 200
+      }
+    ]
+  }
+}

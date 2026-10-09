@@ -36,7 +36,7 @@ def test_parse_rss():
 
 def test_parse_youtube():
     """Тест парсинга YouTube-канала."""
-    source = NewsSource("youtube", "https://www.youtube.com/channel/UCJluNGyCBXAR6-CHPRMrZUw", True, None, "JB O'Neill")
+    source = NewsSource("youtube", "https://www.youtube.com/channel/UCEO3Li9O6BHE3SLR7f0WOGA", True, None, "Shaun Murray")
 
     try:
         results = parse_youtube(source, ["wake", "surf"])

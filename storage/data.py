@@ -3,16 +3,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
 
 from config.settings import config
+from services.competitions_from_news import sync_news_competitions
 from storage.repository import (
     AsyncNewsRepository,
     DuplicateItemError,
     initialize_database,
 )
+from services.raw_feed_sync import sync_ingest_item, sync_ingest_items_batch
+from utils.media_utils import normalize_media_ref
 
 LOGGER = logging.getLogger(__name__)
 
@@ -20,6 +24,20 @@ DB_PATH = Path(config.DB_PATH)
 _REPOSITORY = AsyncNewsRepository(DB_PATH)
 _INITIALIZED = False
 _INIT_LOCK = asyncio.Lock()
+
+
+@dataclass(slots=True, frozen=True)
+class SaveNewsStats:
+    """Результат persist: новые / дубли / ошибки записи."""
+
+    saved: int
+    duplicates: int
+    errors: int
+    collected: int
+
+    @property
+    def parsed(self) -> int:
+        return self.collected
 
 
 async def _ensure_initialized() -> None:
@@ -32,11 +50,15 @@ async def _ensure_initialized() -> None:
             _INITIALIZED = True
 
 
-async def save_news(news_items: Iterable[dict]) -> int:
-    """Persist fetched news items and return number of inserted records."""
+async def save_news_detailed(news_items: Iterable[dict]) -> SaveNewsStats:
+    """Persist fetched news items; вернуть saved / duplicates / errors."""
     await _ensure_initialized()
+    items = list(news_items)
     saved = 0
-    for item in news_items:
+    duplicates = 0
+    errors = 0
+    inserted_for_sync: list[tuple[int, dict]] = []
+    for item in items:
         payload = {
             "source": item.get("source", "unknown"),
             "title": item.get("title"),
@@ -47,15 +69,41 @@ async def save_news(news_items: Iterable[dict]) -> int:
             "videos": _join_media(item.get("videos")),
             "transcript": item.get("transcript"),
             "comment": item.get("comment"),
+            "checksum": item.get("checksum"),
         }
         try:
-            await _REPOSITORY.create_item(payload)
+            item_id = await _REPOSITORY.create_item(payload)
             saved += 1
+            inserted_for_sync.append((item_id, {**item, **payload, "id": item_id, "status": "new"}))
         except DuplicateItemError:
+            duplicates += 1
             LOGGER.debug("Skip duplicate item with link %s", item.get("link"))
+        except Exception:  # noqa: BLE001
+            errors += 1
+            LOGGER.exception("Failed to persist news item link=%s", item.get("link"))
+    if inserted_for_sync:
+        synced = await sync_ingest_items_batch(inserted_for_sync)
+        if synced < len(inserted_for_sync):
+            for item_id, enriched in inserted_for_sync[synced:]:
+                await sync_ingest_item(item_id, enriched)
+        try:
+            await sync_news_competitions([enriched for _item_id, enriched in inserted_for_sync])
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Auto competitions extraction failed")
     if saved:
         LOGGER.info("Persisted %s new news items", saved)
-    return saved
+    return SaveNewsStats(
+        saved=saved,
+        duplicates=duplicates,
+        errors=errors,
+        collected=len(items),
+    )
+
+
+async def save_news(news_items: Iterable[dict]) -> int:
+    """Persist fetched news items and return number of inserted records."""
+    stats = await save_news_detailed(news_items)
+    return stats.saved
 
 
 async def save_contacts(contacts: Iterable[dict]) -> int:
@@ -89,6 +137,28 @@ async def save_contacts(contacts: Iterable[dict]) -> int:
     if inserted:
         LOGGER.info("Persisted %s contact entries", inserted)
     return inserted
+
+
+async def save_channel_commenters(records: Iterable[dict]) -> int:
+    """Сохранить комментарии каналов (discussion) в SQLite."""
+    await _ensure_initialized()
+    normalized: list[dict] = []
+    for rec in records:
+        cid = str(rec.get("commenter_id") or "").strip()
+        if not cid:
+            continue
+        normalized.append(dict(rec))
+    if not normalized:
+        return 0
+    n = await _REPOSITORY.upsert_channel_commenters(normalized)
+    if n:
+        LOGGER.info("Persisted %s channel_commenter rows", n)
+    return n
+
+
+async def count_channel_commenters() -> int:
+    await _ensure_initialized()
+    return await _REPOSITORY.count_channel_commenters()
 
 
 async def get_latest_news(limit: int = 10) -> list[dict]:
@@ -141,15 +211,25 @@ def _join_media(value: object) -> str | None:
     if value is None:
         return None
     if isinstance(value, (str, bytes)):
-        return value.decode() if isinstance(value, bytes) else value
+        text = value.decode() if isinstance(value, bytes) else value
+        refs = [normalize_media_ref(part.strip()) for part in text.splitlines()]
+        refs = [ref for ref in refs if ref]
+        return "\n".join(refs) if refs else None
     if isinstance(value, Sequence):
-        return "\n".join(str(item) for item in value)
-    return str(value)
+        refs = [normalize_media_ref(item) for item in value]
+        refs = [ref for ref in refs if ref]
+        return "\n".join(refs) if refs else None
+    normalized = normalize_media_ref(value)
+    return normalized or None
 
 
 __all__ = [
+    "SaveNewsStats",
     "save_news",
+    "save_news_detailed",
     "save_contacts",
+    "save_channel_commenters",
+    "count_channel_commenters",
     "get_latest_news",
     "clear_old_news",
     "get_repository",

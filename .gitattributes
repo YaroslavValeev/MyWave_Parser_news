@@ -1,0 +1,15 @@
+# Release digests must stay identical on Windows, GitHub and Linux.
+scripts/releases/editorial-4o-mini/* -text
+scripts/releases/article-links/* -text
+scripts/releases/summary-conditions/* -text
+scripts/releases/runtime-alignment/* -text
+scripts/releases/runtime-alignment/overlay.patch -whitespace
+scripts/releases/manual-final-post/* -text
+scripts/releases/manual-final-post/overlay.patch -whitespace
+scripts/deploy_editorial_release.py text eol=lf
+scripts/editorial_offline_smoke.py text eol=lf
+scripts/preview_article_summary.py text eol=lf
+scripts/repair_review_article_626.py text eol=lf
+scripts/audit_reconciled_runtime.py text eol=lf
+scripts/probe_live_final_post.py text eol=lf
+telegram_bot/keyboards.py text eol=lf

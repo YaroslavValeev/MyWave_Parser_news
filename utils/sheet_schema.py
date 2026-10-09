@@ -40,6 +40,13 @@ RAW_FEED_COLUMNS = [
     "row_number",
     "canonical_url",
     "cover_image_url",
+    "image_url",
+    "video_url",
+    "embed_url",
+    "video_embed_url",
+    "poster_url",
+    "thumbnail_url",
+    "video_preview_image_url",
     "published_at",
     "source_item_id",
     "original_published_at",
@@ -67,6 +74,7 @@ RAW_FEED_COLUMNS = [
     "ingest_attempts",
     "marketing_pack",
     "excerpt",
+    "lead",
     "content_md",
     "seo_title",
     "meta_description",
@@ -74,6 +82,10 @@ RAW_FEED_COLUMNS = [
     "og_description",
     "schema_json",
     "telegram_published",
+    "cover_image_path",
+    "source_media_url",
+    "media_status",
+    "media_error",
 ]
 
 # Значения по умолчанию для полей на этапе ingest
@@ -156,6 +168,7 @@ DEFAULTS = {
     # Маркетинг/SEO
     "marketing_pack": "",
     "excerpt": "",
+    "lead": "",
     "content_md": "",
     "seo_title": "",
     "meta_description": "",
@@ -165,6 +178,17 @@ DEFAULTS = {
 
     # Интеграционные/прочие
     "cover_image_url": "",
+    "image_url": "",
+    "video_url": "",
+    "embed_url": "",
+    "video_embed_url": "",
+    "poster_url": "",
+    "thumbnail_url": "",
+    "video_preview_image_url": "",
+    "cover_image_path": "",
+    "source_media_url": "",
+    "media_status": "",
+    "media_error": "",
     "published_posts": "",
     "process_status": "",
     "telegram_published": "",
