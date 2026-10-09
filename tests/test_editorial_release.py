@@ -303,3 +303,116 @@ def test_summary_package_preserves_installed_profile_and_limits_changed_files():
     assert RELEASE.digest(patch) == manifest["patch_sha256"]
     assert patch.count(b"diff --git") == 1
     assert b"a/nlp/openai_client.py b/nlp/openai_client.py" in patch
+
+
+def test_alignment_package_matches_audited_seven_files_and_guards_all_others():
+    from scripts.audit_reconciled_runtime import EXPECTED
+
+    directory = SCRIPT.parent / "releases/runtime-alignment"
+    raw = (directory / "manifest.json").read_bytes()
+    manifest = json.loads(raw)
+    assert RELEASE.digest(raw) == RELEASE.PACKAGE_MANIFESTS["runtime-alignment"]
+    assert (
+        RELEASE.digest((directory / "overlay.patch").read_bytes())
+        == manifest["patch_sha256"]
+    )
+    assert len(manifest["after"]) == 7 and manifest["protect_item_626"] is True
+    assert manifest["initialize_database"] is False
+    assert {**manifest["guard"], **manifest["after"]}.items() >= EXPECTED.items()
+    assert set(manifest["before"]) == set(manifest["after"])
+
+
+def add_review_item(db_path):
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO items VALUES(626,'review','bound source')")
+        db.execute("INSERT INTO nlp_results VALUES(626,'reviewed summary')")
+
+
+def test_release_snapshot_preserves_626_and_rejects_status_or_publication_change(
+    tmp_path,
+):
+    db_path = tmp_path / "data.db"
+    database(db_path)
+    add_review_item(db_path)
+    manifest = {"protect_item_626": True}
+    before = db_path.read_bytes()
+    value = RELEASE.release_snapshot(db_path, manifest)
+    assert db_path.read_bytes() == before
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE nlp_results SET summary='owner update' WHERE item_id=626")
+    assert RELEASE.release_snapshot(db_path, manifest) != value
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE items SET status='discarded' WHERE id=626")
+    with pytest.raises(RuntimeError, match="target_owner_state_changed"):
+        RELEASE.release_snapshot(db_path, manifest)
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE items SET status='review' WHERE id=626")
+        db.execute("INSERT INTO publications VALUES(626)")
+    with pytest.raises(RuntimeError, match="target_owner_state_changed"):
+        RELEASE.release_snapshot(db_path, manifest)
+
+
+def test_alignment_deploy_changes_no_database_records_and_skips_migration(
+    tmp_path, monkeypatch
+):
+    root, stage = tmp_path / "server", tmp_path / "stage"
+    manifest, patch = setup(root)
+    manifest.update(protect_item_626=True, initialize_database=False)
+    stage.mkdir()
+    prepared = RELEASE.prepare(root, stage, manifest, patch)
+    db_path = root / "data.db"
+    database(db_path)
+    add_review_item(db_path)
+    snapshot = RELEASE.release_snapshot(db_path, manifest)
+    before = db_path.read_bytes()
+    monkeypatch.setattr(RELEASE, "ROOT", root)
+    monkeypatch.setattr(RELEASE, "BACKUPS", tmp_path / "backups")
+    monkeypatch.setattr(RELEASE, "service", lambda *args: "777")
+    monkeypatch.setattr(RELEASE, "health", lambda: "777")
+    monkeypatch.setattr(RELEASE, "smoke", lambda root: None)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("migration or external command must not run")
+
+    monkeypatch.setattr(RELEASE, "run", forbidden)
+    RELEASE.deploy(manifest, prepared, db_path, snapshot)
+    assert (
+        db_path.read_bytes() == before
+        and RELEASE.release_snapshot(db_path, manifest) == snapshot
+    )
+    backup = next((tmp_path / "backups").iterdir())
+    RELEASE.rollback(str(backup))
+    assert db_path.read_bytes() == before
+
+
+def test_alignment_detects_owner_change_during_service_stop_before_code_writes(
+    tmp_path, monkeypatch
+):
+    root, stage = tmp_path / "server", tmp_path / "stage"
+    manifest, patch = setup(root)
+    manifest.update(protect_item_626=True, initialize_database=False)
+    stage.mkdir()
+    prepared = RELEASE.prepare(root, stage, manifest, patch)
+    db_path = root / "data.db"
+    database(db_path)
+    add_review_item(db_path)
+    snapshot = RELEASE.release_snapshot(db_path, manifest)
+    before = (root / "old.py").read_bytes()
+    monkeypatch.setattr(RELEASE, "ROOT", root)
+    monkeypatch.setattr(RELEASE, "BACKUPS", tmp_path / "backups")
+    changed = False
+
+    def service(*args):
+        nonlocal changed
+        if args[0] == "stop" and not changed:
+            changed = True
+            with sqlite3.connect(db_path) as db:
+                db.execute(
+                    "UPDATE nlp_results SET summary='owner update' WHERE item_id=626"
+                )
+        return "777"
+
+    monkeypatch.setattr(RELEASE, "service", service)
+    with pytest.raises(RuntimeError, match="target_owner_state_changed"):
+        RELEASE.deploy(manifest, prepared, db_path, snapshot)
+    assert (root / "old.py").read_bytes() == before

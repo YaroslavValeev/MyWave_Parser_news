@@ -30,6 +30,7 @@ PACKAGE_MANIFESTS = {
     "editorial-4o-mini": MANIFEST_SHA256,
     "article-links": "c12be9cc541c6f3d113df2b2df108488856341c939bd2376133157b7f020293a",
     "summary-conditions": "e4b1aae4f82c867fa7af8d1ec404720087f41794a48a2b9f76cb5df45b884987",
+    "runtime-alignment": "df864e03cd545cafcc5e2121c19fa66b72805bdce0f6ef383097c4e898106dbb",
 }
 SAFE_ERRORS = {
     "unsafe_release_path",
@@ -169,7 +170,10 @@ def prepare(root, stage, manifest, patch):
         ]
         for name in filenames:
             source = Path(directory) / name
-            if source.suffix in {".py", ".sql"} and not source.is_symlink():
+            if (
+                source.suffix in {".py", ".sql"}
+                or source.relative_to(root).as_posix() == "requirements.txt"
+            ) and not source.is_symlink():
                 target = path_for(stage, str(source.relative_to(root)))
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(lf(source.read_bytes()))
@@ -223,6 +227,36 @@ def target_snapshot(db_path):
                     "nlp": dict(nlp) if nlp else None,
                     "publications": count,
                 },
+                sort_keys=True,
+                default=str,
+            ).encode()
+        )
+
+
+def release_snapshot(db_path, manifest):
+    """Protect the repaired review item as well as rejected item 649."""
+    baseline = target_snapshot(db_path)
+    if not manifest.get("protect_item_626", False):
+        return baseline
+    with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("BEGIN")
+        row = db.execute("SELECT * FROM items WHERE id=626").fetchone()
+        nlp = db.execute("SELECT * FROM nlp_results WHERE item_id=626").fetchone()
+        count = db.execute(
+            "SELECT COUNT(*) FROM publications WHERE item_id=626"
+        ).fetchone()[0]
+        if row is None or nlp is None or row["status"] != "review" or count:
+            raise RuntimeError("target_owner_state_changed")
+        return digest(
+            json.dumps(
+                {
+                    "649": baseline,
+                    "item": dict(row),
+                    "nlp": dict(nlp),
+                    "publications": count,
+                },
+                ensure_ascii=False,
                 sort_keys=True,
                 default=str,
             ).encode()
@@ -330,7 +364,7 @@ def deploy(manifest, prepared, db_path, snapshot, *, hosts=()):
         verify(ROOT, manifest["guard"])
         if env_path.read_bytes() != env_raw:
             raise RuntimeError("configuration_changed")
-        if target_snapshot(db_path) != snapshot:
+        if release_snapshot(db_path, manifest) != snapshot:
             raise RuntimeError("target_owner_state_changed")
         with (
             sqlite3.connect(db_path) as source,
@@ -344,14 +378,15 @@ def deploy(manifest, prepared, db_path, snapshot, *, hosts=()):
             if old is not None and b"\r\n" in old:
                 raw = lf(raw).replace(b"\n", b"\r\n")
             install(ROOT / name, raw, metadata[name])
-        run(
-            [
-                str(ROOT / "venv/bin/python"),
-                "-B",
-                "-c",
-                "import asyncio;from config.settings import config;from storage.repository import initialize_database;asyncio.run(initialize_database(config.DB_PATH))",
-            ]
-        )
+        if manifest.get("initialize_database", True):
+            run(
+                [
+                    str(ROOT / "venv/bin/python"),
+                    "-B",
+                    "-c",
+                    "import asyncio;from config.settings import config;from storage.repository import initialize_database;asyncio.run(initialize_database(config.DB_PATH))",
+                ]
+            )
         smoke(ROOT)
         if hosts:
             if env_path.read_bytes() != env_raw:
@@ -361,7 +396,7 @@ def deploy(manifest, prepared, db_path, snapshot, *, hosts=()):
         verify(ROOT, manifest["after"])
         verify(ROOT, manifest["guard"])
         # Migration adds a nullable column; compare original evidence while excluding it.
-        if target_snapshot(db_path) != snapshot:
+        if release_snapshot(db_path, manifest) != snapshot:
             raise RuntimeError("target_owner_state_changed")
         state = {
             "root": str(ROOT),
@@ -384,7 +419,7 @@ def deploy(manifest, prepared, db_path, snapshot, *, hosts=()):
         )
         service("start")
         pid = health()
-        if target_snapshot(db_path) != snapshot:
+        if release_snapshot(db_path, manifest) != snapshot:
             raise RuntimeError("target_owner_state_changed")
         emit(
             release="ok",
@@ -525,7 +560,7 @@ def main():
             for name in ("openai", "httpx", "aiogram", "aiosqlite")
         },
     )
-    snapshot = target_snapshot(db_path)
+    snapshot = release_snapshot(db_path, manifest)
     already_installed = all(
         (ROOT / name).is_file() and digest(lf((ROOT / name).read_bytes())) == expected
         for name, expected in manifest["after"].items()

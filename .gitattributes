@@ -2,6 +2,7 @@
 scripts/releases/editorial-4o-mini/* -text
 scripts/releases/article-links/* -text
 scripts/releases/summary-conditions/* -text
+scripts/releases/runtime-alignment/* -text
 scripts/deploy_editorial_release.py text eol=lf
 scripts/editorial_offline_smoke.py text eol=lf
 scripts/preview_article_summary.py text eol=lf
