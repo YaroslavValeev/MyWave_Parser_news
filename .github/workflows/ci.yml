@@ -138,6 +138,7 @@ jobs:
             tests/test_card_preview_text.py \
             tests/test_raw_feed_publish_contract.py \
             tests/test_owner_review_telegram.py \
+            tests/test_final_post_edit.py \
             tests/test_nlp_source_context.py \
             tests/test_item_context.py \
             tests/test_owner_content.py \

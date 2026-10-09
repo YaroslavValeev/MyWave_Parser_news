@@ -666,6 +666,13 @@ class PublicationService:
             parts.append(f"<b>{title}</b>")
             if body:
                 parts.append(html.escape(str(body)))
+        elif (
+            str(nlp.get("merged_text") or "").strip()
+            and isinstance(nlp.get("extra"), Mapping)
+            and nlp["extra"].get("owner_manual_final_text") is True
+        ):
+            # The Owner submitted the complete body: keep it verbatim and escaped.
+            parts.append(html.escape(str(nlp["merged_text"]).strip()))
         elif summary and notes:
             # Короткий факт + ярко выделенное экспертное мнение Owner.
             short_summary = to_card_preview_text(

@@ -36,6 +36,7 @@ from services.raw_feed_sync import sync_media_fields
 from storage.repository import AsyncNewsRepository
 from telegram_bot.client_copy import training_media_request_html
 from telegram_bot.access import is_bot_operator
+from telegram_bot.final_post_edit import register_final_post_edit
 from telegram_bot.views import (
     REVIEW_QUEUE_LIMIT,
     format_report,
@@ -562,6 +563,8 @@ def create_router(repository: AsyncNewsRepository, bot: Bot) -> Router:
             return
         await state.clear()
         await message.answer("Сценарий отменён.")
+
+    register_final_post_edit(router, repo)
 
     @router.message(or_f(Command("help"), F.text == MENU_HELP))
     async def cmd_help(message: Message):

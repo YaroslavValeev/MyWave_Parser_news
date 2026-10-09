@@ -159,6 +159,12 @@ async def run_case(db: Path, *, changed: bool):
             user_id=1,
             username="offline_owner",
         )
+        snapshot = await repo.get_final_post_edit_snapshot(item_id)
+        await repo.save_manual_final_post(
+            item_id,
+            "Зимнее хранение PCM\n\nПроверю свой двигатель перед зимой. Ручная финальная правка.",
+            expected_token=snapshot["token"], user_id=1,
+        )
         progress("owner_approval", changed=changed)
         await handle_callback(repo, query, {"action": "approve", "item_id": item_id})
         await handle_callback(
@@ -179,6 +185,7 @@ async def run_case(db: Path, *, changed: bool):
             assert (
                 "PCM" in sent and "чемпионат" not in sent.lower() and "Проверю" in sent
             )
+            assert "Ручная финальная правка" in sent
     assert (await repo.get_publication_by_item(item_id) is None) == changed
 
 
