@@ -306,8 +306,6 @@ def test_summary_package_preserves_installed_profile_and_limits_changed_files():
 
 
 def test_alignment_package_matches_audited_seven_files_and_guards_all_others():
-    from scripts.audit_reconciled_runtime import EXPECTED
-
     directory = SCRIPT.parent / "releases/runtime-alignment"
     raw = (directory / "manifest.json").read_bytes()
     manifest = json.loads(raw)
@@ -318,7 +316,13 @@ def test_alignment_package_matches_audited_seven_files_and_guards_all_others():
     )
     assert len(manifest["after"]) == 7 and manifest["protect_item_626"] is True
     assert manifest["initialize_database"] is False
-    assert {**manifest["guard"], **manifest["after"]}.items() >= EXPECTED.items()
+    current = json.loads(
+        (SCRIPT.parent / "releases/manual-final-post/manifest.json").read_bytes()
+    )
+    assert {**manifest["guard"], **manifest["after"]} == {
+        **current["guard"],
+        **current["before"],
+    }
     assert set(manifest["before"]) == set(manifest["after"])
 
 
@@ -440,3 +444,59 @@ def test_alignment_detects_owner_change_during_service_stop_before_code_writes(
     with pytest.raises(RuntimeError, match="target_owner_state_changed"):
         RELEASE.deploy(manifest, prepared, db_path, snapshot)
     assert (root / "old.py").read_bytes() == before
+
+
+def test_manual_final_package_matches_runtime_and_keeps_audited_baseline():
+    from scripts.audit_reconciled_runtime import EXPECTED
+
+    directory = SCRIPT.parent / "releases/manual-final-post"
+    raw = (directory / "manifest.json").read_bytes()
+    manifest = json.loads(raw)
+    assert RELEASE.digest(raw) == RELEASE.PACKAGE_MANIFESTS["manual-final-post"]
+    assert (
+        RELEASE.digest((directory / "overlay.patch").read_bytes())
+        == manifest["patch_sha256"]
+    )
+    assert (
+        manifest["initialize_database"] is False
+        and manifest["protect_item_626"] is True
+    )
+    assert len(manifest["before"]) == 6 and len(manifest["after"]) == 7
+    assert set(manifest["after"]) - set(manifest["before"]) == {
+        "telegram_bot/final_post_edit.py"
+    }
+    assert {**manifest["guard"], **manifest["after"]}.items() >= EXPECTED.items()
+    assert len(EXPECTED) == 106 and len(manifest["guard"]) == 100
+
+
+def test_manual_final_patch_stages_audited_profile_without_changing_live_files(
+    tmp_path,
+):
+    from scripts.audit_reconciled_runtime import EXPECTED
+
+    repository = SCRIPT.parents[1]
+    directory = SCRIPT.parent / "releases/manual-final-post"
+    manifest = json.loads((directory / "manifest.json").read_bytes())
+    patch = (directory / "overlay.patch").read_bytes()
+    root, stage = tmp_path / "server", tmp_path / "stage"
+    root.mkdir()
+    stage.mkdir()
+    for name in (*EXPECTED, "scripts/editorial_offline_smoke.py"):
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(RELEASE.lf((repository / name).read_bytes()))
+    patch_path = tmp_path / "manual.patch"
+    patch_path.write_bytes(patch)
+    RELEASE.run(["git", "apply", "--reverse", str(patch_path)], cwd=root)
+    RELEASE.verify(root, manifest["before"])
+    RELEASE.verify(root, manifest["guard"])
+    assert not (root / "telegram_bot/final_post_edit.py").exists()
+    before = {name: (root / name).read_bytes() for name in manifest["before"]}
+    prepared = RELEASE.prepare(root, stage, manifest, patch)
+    assert set(prepared) == set(manifest["after"])
+    assert all((root / name).read_bytes() == raw for name, raw in before.items())
+    assert not (root / "telegram_bot/final_post_edit.py").exists()
+    RELEASE.verify(stage, manifest["after"])
+    (root / "telegram_bot/views.py").write_text("independent_owner_change=True\n")
+    with pytest.raises(RuntimeError, match="file_changed:telegram_bot/views.py"):
+        RELEASE.prepare(root, stage, manifest, patch)
