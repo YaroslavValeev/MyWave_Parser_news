@@ -160,6 +160,7 @@ jobs:
             tests/test_summary_preview.py \
             tests/test_review_article_repair.py \
             tests/test_publication_service.py
+          pytest -q --tb=short tests/test_publication_funnel.py
           pytest -q --tb=short \
             tests/test_media_pipeline.py \
             tests/test_telegram_media_hydrate.py \

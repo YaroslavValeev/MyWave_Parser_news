@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "checked_on": "2026-10-25",
+  "timezone": "Europe/Moscow",
+  "delegation_id": "mywave-2026-10-25-parser-v1",
+  "release_path": {
+    "selected": [
+      7,
+      8
+    ],
+    "overlapping_hold": [
+      6
+    ],
+    "separate_model_draft": 11,
+    "new_deploy_authorized": false,
+    "new_sends_authorized": false
+  },
+  "github": {
+    "main": {
+      "sha": "a2c5d439212cf22d22771435fabe334017999002",
+      "workflow_run": 23662772285,
+      "ci": "failure",
+      "event": "push",
+      "ci_executed_on": "2026-03-27",
+      "note": "Stored failure for this exact old main SHA; not a test of the editorial head"
+    },
+    "pr6": {
+      "head": "a023557cf3fa54008cdb79098cf926d535b9bf8e",
+      "base": "a2c5d439212cf22d22771435fabe334017999002",
+      "state": "open",
+      "ci_run": 29308914777,
+      "ci": "success",
+      "runtime_build_job": true
+    },
+    "pr7": {
+      "head": "c7d6a37974e9a30257241c12f90c54d5ebb4539e",
+      "base": "a2c5d439212cf22d22771435fabe334017999002",
+      "state": "open",
+      "ci_run": 29316291965,
+      "ci": "success",
+      "checks": [
+        "current_tree_secrets",
+        "history_report"
+      ],
+      "runtime_build_job": false
+    },
+    "pr8": {
+      "head": "07975c262a6864919729cc6be4e193bc57b3f629",
+      "base": "c7d6a37974e9a30257241c12f90c54d5ebb4539e",
+      "state": "open",
+      "ci_run": 37911355601,
+      "ci": "success",
+      "runtime_build_job": true,
+      "test_groups_passed": [
+        277,
+        65,
+        6,
+        3
+      ],
+      "ci_executed_on": "2026-10-09"
+    },
+    "pr11": {
+      "head": "90aed57cefcd3078d1a0266a0f712dc3505e1093",
+      "state": "draft",
+      "in_release": false
+    }
+  },
+  "overlap": {
+    "pr6_runtime_files_over_p0": 102,
+    "pr8_runtime_files_over_p0": 206,
+    "common_paths": 102,
+    "pr6_only_paths": [],
+    "identical_common_blobs": 75,
+    "different_common_paths": [
+      ".github/workflows/ci.yml",
+      "bot_aiogram.py",
+      "config/settings.py",
+      "docs/integration/CONTROLLED_POST_E2E.md",
+      "nlp/openai_client.py",
+      "requirements.txt",
+      "services/media_upload.py",
+      "services/publication.py",
+      "services/site_media_client.py",
+      "storage/repository.py",
+      "telegram_bot/keyboards.py",
+      "telegram_bot/views.py",
+      "tests/test_item_context.py",
+      "tests/test_manual_collect.py",
+      "tests/test_media_upload.py",
+      "tests/test_openai_client.py",
+      "tests/test_owner_content.py",
+      "tests/test_owner_review_telegram.py",
+      "tests/test_publication_service.py",
+      "tests/test_repository_async.py",
+      "tests/test_rss_parser_media.py",
+      "tests/test_status_labels_ru.py",
+      "tests/test_telegram_parser_album.py",
+      "utils/import_asyncio.py",
+      "utils/item_context.py",
+      "utils/media_utils.py",
+      "utils/owner_content.py"
+    ]
+  },
+  "runtime": {
+    "accepted_source_ref": "07975c262a6864919729cc6be4e193bc57b3f629",
+    "model_baseline": "gpt-4o-mini",
+    "profile_file": "scripts/audit_reconciled_runtime.py",
+    "profile_file_count": 106,
+    "profile_file_sha256": "2dd125b0af3c348e81958a9e33c75a9f716087f98ff86a33533fc435d70748d1",
+    "expected_map_sha256": "3c6eab28da03b0582ed2e7c82b90499c2fc3943b744bc7584a54ecd930751734",
+    "digest_normalization": "CRLF-to-LF",
+    "fresh_production_identity": null,
+    "refresh_attempt_on": "2026-10-25",
+    "refresh_result": "ssh_banner_timeout",
+    "historical_git_head": "06fcfb43dda9ee5ac9139ed8bf043bed9f25f651",
+    "historical_model_packages": {
+      "openai": "2.28.0",
+      "httpx": "0.28.1",
+      "aiogram": "3.30.0",
+      "aiosqlite": "0.22.1"
+    },
+    "last_owner_reported_backup": "/opt/bot3/backups/editorial-release-20261009T101224.982073Z",
+    "overlay_chain": [
+      {
+        "package": "editorial-4o-mini",
+        "manifest": "scripts/releases/editorial-4o-mini/manifest.json",
+        "manifest_sha256": "dcaab37d071e3a30c70bb0438bfd34afb79c4aba38ac95a1966386527996f327",
+        "patch_sha256": "e1cba7cc3e330655e9d9a1e4fd4043a30b32c0d04f1f14fbf3d287b8be32890f",
+        "runtime_source_ref": "30df7caf107086c217ceeb1fc50a48e0e9a93720",
+        "changed_files": 11,
+        "guarded_files": 5
+      },
+      {
+        "package": "article-links",
+        "manifest": "scripts/releases/article-links/manifest.json",
+        "manifest_sha256": "c12be9cc541c6f3d113df2b2df108488856341c939bd2376133157b7f020293a",
+        "patch_sha256": "1a22742c8d6528edf3e4376cab461e6809a6c60f21539da65591d7a4bcd21863",
+        "runtime_source_ref": "5efcaafecdcaa355d19346b5158249139e594c7e",
+        "changed_files": 3,
+        "guarded_files": 13
+      },
+      {
+        "package": "summary-conditions",
+        "manifest": "scripts/releases/summary-conditions/manifest.json",
+        "manifest_sha256": "e4b1aae4f82c867fa7af8d1ec404720087f41794a48a2b9f76cb5df45b884987",
+        "patch_sha256": "5870792982dc2d270fe8767028c91db1c6201712968b503c743bacbd7cf38820",
+        "runtime_source_ref": "d3413dd83ea699284b5fffda16188ec4344482cc",
+        "changed_files": 1,
+        "guarded_files": 15
+      },
+      {
+        "package": "runtime-alignment",
+        "manifest": "scripts/releases/runtime-alignment/manifest.json",
+        "manifest_sha256": "e9b556a65d2adc29669a665d12386d2ae82c4a8def0219cc9a25dfb602178db9",
+        "patch_sha256": "590b4ad1d957df2fd2528fdee3942bc876f1a6ee3dfbceea5bdf40fcfa6500f9",
+        "runtime_source_ref": "dc19eee3a06a2369fcb10f37d59661495d2310db",
+        "changed_files": 7,
+        "guarded_files": 99
+      },
+      {
+        "package": "manual-final-post",
+        "manifest": "scripts/releases/manual-final-post/manifest.json",
+        "manifest_sha256": "521dcf772cf7055d9e550196e8d48d4d553d0f69340949df7e44dbbca1f850df",
+        "patch_sha256": "d4fd3127cf615c54dbf03c2cb27f93e52ef2b9b295a3e24bb0c8633a17cf1123",
+        "runtime_source_ref": "9202e2ab4a1102a5a2c2d6435b4b925d68765da9",
+        "changed_files": 7,
+        "guarded_files": 100
+      }
+    ]
+  },
+  "historical_private_probe": {
+    "evidence_source": "owner_posted_stdout_in_this_chat",
+    "fresh_file_read_on_20261025": false,
+    "receipt_path": "/opt/bot3/backups/live-final-post-ca1a1d151c0683bea8a09fc6.json",
+    "message_id": 6817,
+    "source_item_id": 626,
+    "production_publication_id": null,
+    "kind": "text",
+    "manual_text_verified": true,
+    "production_records_unchanged": true,
+    "production_database_writes": 0,
+    "real_openai_requests": 0,
+    "telegram_posts": 1,
+    "repeat_sends": 0,
+    "business_kpi": false
+  },
+  "business_metrics_current": {
+    "production_deliveries": null,
+    "site_views": null,
+    "transitions": null,
+    "requests": null,
+    "attributed_requests": null,
+    "reason": "current_production_receipts_and_server_side_event_exports_not_read"
+  },
+  "gates": [
+    "owner_secret_rotation_and_release_go",
+    "merge_pr7_then_retarget_pr8_and_rerun_exact_merge_ci",
+    "fresh_read_only_runtime_and_receipt_audit",
+    "one_publication_writer_or_serialized_publication_claim",
+    "durable_source_final_text_delivery_provenance",
+    "site_and_intake_accept_publication_event_contract",
+    "stable_publication_id_available_before_cta",
+    "trusted_event_exports_for_request_attribution"
+  ]
+}
