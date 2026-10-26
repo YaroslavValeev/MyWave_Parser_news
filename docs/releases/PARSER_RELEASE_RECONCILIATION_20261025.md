@@ -56,9 +56,20 @@ aiosqlite 0.22.1. These are historical observations, not a complete dependency
 lock or a current production measurement.
 
 An authorized read-only SSH attempt on 25 October failed during banner exchange
-before any remote command executed. Current service/PID, Git identity, package
-versions, database, receipts and single-consumer state were not refreshed. No
-reset/checkout, restart, rollout, source fetch, or Telegram request was made.
+before any remote command executed. On 26 October the Owner supplied the complete
+output of the pinned read-only audit commands. This is operator-provided server
+evidence, not an independent SSH observation. The audit reports 106/106 matching
+files, service active/running, PID 716, exit status 0, the historical Git head,
+and the same package versions/model/source allowlist. The audit profile's source
+ref is `9202e2ab4a1102a5a2c2d6435b4b925d68765da9`; matching that profile is not
+proof that the server Git head advanced. Single-consumer serialization remains
+unverified. No reset/checkout, restart, rollout, source fetch or Telegram request
+was made by these audit commands.
+
+Item 626 is now `discarded`, with its source binding and matching NLP retained,
+and zero publication rows. Its earlier `review` state is historical; the audit
+does not establish who changed the status or why, and it must not restore it.
+Item 649 is also `discarded`, with zero publication rows.
 
 ## Existing receipt and actual measurements
 
@@ -70,8 +81,12 @@ production DB writes, and zero OpenAI requests. Repetition returned
 Existing receipt:
 `/opt/bot3/backups/live-final-post-ca1a1d151c0683bea8a09fc6.json`.
 First-run log: `/opt/bot3/backups/live-final-run.G4tNqj`.
-These files were not reread from the VPS on 25 October. The receipt is a
-historical private smoke test; it has no production `publication_id` and no
+These files were not reread from the VPS on 25 October. The 26 October Owner
+output confirms the existing receipt still has state `delivered`, message 6817,
+and `manual_text_verified: true`; its SHA-256 is
+`5f9116700f71131ceba4eb37f864c374bed5749ae959d819cb1603d1ce76cfb1`.
+This reads persisted evidence without sending or fetching the Telegram message.
+The receipt is a historical private smoke test; it has no production `publication_id` and no
 associated Site transition or request. It is not counted as a current business
 publication or conversion. It must not be resent to refresh evidence.
 
@@ -80,7 +95,7 @@ publication or conversion. It must not be resent to refresh evidence.
 | Private smoke posts | 1, historical operator-confirmed ACK |
 | Manual text match | true, historical returned-text comparison |
 | Extra messages on repeated probe | 0, historical `already_sent` result |
-| Current production delivery receipts | unknown; current DB not read |
+| Current production delivery receipts | 72 unique stored ACK records; 0 duplicate bookkeeping rows and 0 rejected receipts |
 | Current Site view events / CTA transitions | unknown; no current server exports |
 | Accepted or attributable requests | unknown; no request-service evidence |
 
@@ -88,6 +103,14 @@ Historical Sheets counts in the 18 October letter are not reused as current
 KPIs. Missing measurements are null, not zero. The new read-only auditor
 reconciles actual stored receipts and explicitly supplied server-event adapters;
 provided events remain candidates until their origin/completeness is reviewed.
+The 72 stored records range from 27 May through 19 October 2026 (UTC). This is
+database receipt evidence, not a live check that every Telegram message remains
+available, or a count of views, clicks or requests. The private probe is separate.
+Both audit outputs report zero database writes, external model calls and sends;
+the funnel audit additionally reports zero external requests. No event export
+was supplied, so attribution remains unknown. The source attachment's hash and
+selected evidence fields are retained in the machine manifest; no raw chat IDs,
+customer text or secrets are copied into the release record.
 
 ## Defect addressed and acceptance gates
 
@@ -107,7 +130,7 @@ logs it in separate transactions; hardening that writer is a separate remaining
 gate, not a guarantee supplied by this read-only tool.
 
 Remaining gates: Owner rotation/release approval; #7→#8 integration checks;
-fresh VPS identity/receipts; one writer; delivery-time source/final-text hashes;
+one writer; delivery-time source/final-text hashes;
 durable publication ID before CTA; actual receipt/URL propagation; Site and
 Tourism/Coaching acceptance of the event contract; trusted event exports with a
 request ID. KB intake and #11 remain separate tasks. Rollback never replays a

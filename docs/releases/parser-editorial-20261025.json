@@ -109,9 +109,63 @@
     "profile_file_sha256": "2dd125b0af3c348e81958a9e33c75a9f716087f98ff86a33533fc435d70748d1",
     "expected_map_sha256": "3c6eab28da03b0582ed2e7c82b90499c2fc3943b744bc7584a54ecd930751734",
     "digest_normalization": "CRLF-to-LF",
-    "fresh_production_identity": null,
+    "fresh_production_identity": {
+      "evidence_received_on": "2026-10-26",
+      "evidence_source": "owner_provided_server_stdout",
+      "attachment_sha256": "48cb9dc85068b183950ccc71c3766baf5ae3455434308705599b8a2fb0abf6d4",
+      "independent_ssh_verification": false,
+      "runtime_source_ref": "9202e2ab4a1102a5a2c2d6435b4b925d68765da9",
+      "files": {
+        "matched_count": 106,
+        "expected_count": 106,
+        "different": {},
+        "missing": [],
+        "unsafe": []
+      },
+      "service": {
+        "MainPID": "716",
+        "ExecMainStatus": "0",
+        "WorkingDirectory": "/opt/bot3/parser-new-bot",
+        "ActiveState": "active",
+        "SubState": "running"
+      },
+      "git": {
+        "head": "06fcfb43dda9ee5ac9139ed8bf043bed9f25f651",
+        "changed_entries": 853,
+        "untracked_entries": 157
+      },
+      "settings": {
+        "checked": true,
+        "text_model": "gpt-4o-mini",
+        "source_fetch_enabled": true,
+        "source_hosts": [
+          "wakeflot.ru"
+        ]
+      },
+      "packages": {
+        "openai": "2.28.0",
+        "httpx": "0.28.1",
+        "aiogram": "3.30.0",
+        "aiosqlite": "0.22.1"
+      },
+      "items": {
+        "626": {
+          "status": "discarded",
+          "publications": 0,
+          "source_bound": true,
+          "nlp_matches_source": true,
+          "article_sha256": "ed67e8d158633b8169c51ea4a77c71ae85571131f116ef506f72d81e47402bdd"
+        },
+        "649": {
+          "status": "discarded",
+          "publications": 0
+        }
+      },
+      "production_database_writes": 0,
+      "telegram_sends": 0
+    },
     "refresh_attempt_on": "2026-10-25",
-    "refresh_result": "ssh_banner_timeout",
+    "refresh_result": "owner_provided_read_only_audit_ok_after_ssh_banner_timeout",
     "historical_git_head": "06fcfb43dda9ee5ac9139ed8bf043bed9f25f651",
     "historical_model_packages": {
       "openai": "2.28.0",
@@ -190,16 +244,42 @@
     "transitions": null,
     "requests": null,
     "attributed_requests": null,
-    "reason": "current_production_receipts_and_server_side_event_exports_not_read"
+    "reason": "stored_receipts_audited_but_no_server_side_event_exports_or_live_delivery_readback",
+    "stored_unique_delivery_receipts": 72
   },
   "gates": [
     "owner_secret_rotation_and_release_go",
     "merge_pr7_then_retarget_pr8_and_rerun_exact_merge_ci",
-    "fresh_read_only_runtime_and_receipt_audit",
     "one_publication_writer_or_serialized_publication_claim",
     "durable_source_final_text_delivery_provenance",
     "site_and_intake_accept_publication_event_contract",
     "stable_publication_id_available_before_cta",
     "trusted_event_exports_for_request_attribution"
-  ]
+  ],
+  "receipt_audit_20261026": {
+    "evidence_source": "owner_provided_server_stdout",
+    "receipt_counts": {
+      "stored_rows": 72,
+      "unique_eligible_receipts": 72,
+      "duplicate_bookkeeping_rows": 0,
+      "rejected": []
+    },
+    "first_recorded_at": "2026-05-27T05:52:33.941792+00:00",
+    "last_recorded_at": "2026-10-19T09:11:35.298051+00:00",
+    "evidence_level": "stored_ack_record_not_live_telegram_readback",
+    "private_probes": [
+      {
+        "file_sha256": "5f9116700f71131ceba4eb37f864c374bed5749ae959d819cb1603d1ce76cfb1",
+        "state": "delivered",
+        "message_id": 6817,
+        "manual_text_verified": true,
+        "classification": "private_smoke",
+        "business_eligible": false
+      }
+    ],
+    "event_input": null,
+    "production_database_writes": 0,
+    "external_requests": 0,
+    "sends": 0
+  }
 }
