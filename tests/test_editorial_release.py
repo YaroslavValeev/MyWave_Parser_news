@@ -475,6 +475,17 @@ def test_manual_final_patch_stages_audited_profile_without_changing_live_files(
     from scripts.audit_reconciled_runtime import EXPECTED
 
     repository = SCRIPT.parents[1]
+    # Historic overlay tests use its audited postimage, not newer delivery code.
+    import gzip
+
+    profile = json.loads(
+        gzip.decompress(
+            (
+                repository
+                / "tests/fixtures/manual-final-post/runtime-postimage.json.gz"
+            ).read_bytes()
+        )
+    )
     directory = SCRIPT.parent / "releases/manual-final-post"
     manifest = json.loads((directory / "manifest.json").read_bytes())
     patch = (directory / "overlay.patch").read_bytes()
@@ -484,7 +495,13 @@ def test_manual_final_patch_stages_audited_profile_without_changing_live_files(
     for name in (*EXPECTED, "scripts/editorial_offline_smoke.py"):
         target = root / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(RELEASE.lf((repository / name).read_bytes()))
+        target.write_bytes(
+            RELEASE.lf(
+                profile[name].encode("utf-8")
+                if name in profile
+                else (repository / name).read_bytes()
+            )
+        )
     patch_path = tmp_path / "manual.patch"
     patch_path.write_bytes(patch)
     RELEASE.run(["git", "apply", "--reverse", str(patch_path)], cwd=root)

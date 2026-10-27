@@ -18,6 +18,9 @@ transport error, server error or unclassified exception cannot unlock it.
 Unknown delivery changes the item to `error` and logs
 `publication_delivery_unknown`, without copying the arbitrary error body into
 that log. Claims left `sending` after a crash also block later workers.
+Claims and their source items survive age-based cleanup. Claimed and already
+receipted items are excluded from candidate selection and queue counts so they
+cannot occupy the queue limit ahead of other eligible items.
 
 Only an explicit Telegram rejection permits retry. Immediate transport retry is
 restricted to rate-limit rejection, respecting Telegram's `retry_after` value.
@@ -53,6 +56,13 @@ receipts, rejection versus timeout, partial media delivery, failed bookkeeping
 and external synchronization. Docker runs use `--network none`.
 
 ## Future rollout and recovery
+
+Before rollout, `scripts/check_publication_guard_readiness.py --database PATH`
+provides a standard-library-only read-only observation of queue counts, existing
+receipts and claim/migration state. It does not create tables, send requests or
+authorize deployment. On the current pre-upgrade database, absent claims and an
+unrecorded migration are expected. The output deliberately keeps `deploy_ready`
+false: database checks alone cannot establish that every old sender is stopped.
 
 Before any rollout, require green CI and review, recheck the live baseline,
 inventory all publication workers, stop every old sender, and back up code plus

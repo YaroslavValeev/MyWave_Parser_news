@@ -911,7 +911,8 @@ class AsyncNewsRepository:
         cutoff_s = cutoff.isoformat()
         async with self._connection() as db:
             cur = await db.execute(
-                "DELETE FROM items WHERE datetime(created_at) < datetime(?)",
+                """DELETE FROM items WHERE datetime(created_at) < datetime(?)
+                   AND NOT EXISTS (SELECT 1 FROM publication_claims WHERE item_id=items.id)""",
                 (cutoff_s,),
             )
             await db.commit()
@@ -925,6 +926,8 @@ class AsyncNewsRepository:
                 """
                 SELECT * FROM items
                 WHERE status IN ('approved', 'ready_to_publish', 'publish_retry')
+                  AND NOT EXISTS (SELECT 1 FROM publication_claims WHERE item_id=items.id)
+                  AND NOT EXISTS (SELECT 1 FROM publications WHERE item_id=items.id)
                 ORDER BY
                     CASE status
                         WHEN 'ready_to_publish' THEN 0
@@ -972,6 +975,8 @@ class AsyncNewsRepository:
                 """
                 SELECT COUNT(*) FROM items
                 WHERE status IN ('approved', 'ready_to_publish', 'publish_retry')
+                  AND NOT EXISTS (SELECT 1 FROM publication_claims WHERE item_id=items.id)
+                  AND NOT EXISTS (SELECT 1 FROM publications WHERE item_id=items.id)
                 """
             )
             row = await cur.fetchone()

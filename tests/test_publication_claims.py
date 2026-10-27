@@ -2,6 +2,10 @@
 
 import asyncio
 import sqlite3
+import importlib.util
+import json
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -291,3 +295,69 @@ async def test_migration_is_additive_and_idempotent(database):
         path,
         "SELECT count(*) FROM schema_migrations WHERE version='005_publication_claims'",
     ) == [(1,)]
+
+
+def readiness_module():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts/check_publication_guard_readiness.py"
+    )
+    spec = importlib.util.spec_from_file_location("guard_readiness", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.asyncio
+async def test_cleanup_preserves_claims_and_blocked_items_do_not_starve_queue(database):
+    path, item = database
+    repo = AsyncNewsRepository(path)
+    await repo.claim_publication(item, "42")
+    other = await repo.create_item(
+        {"source": "test", "content": "Other", "status": "approved"}
+    )
+    assert [row["id"] for row in await repo.list_publication_candidates(limit=1)] == [
+        other
+    ]
+    assert await repo.count_publication_queue() == 1
+    assert (
+        await repo.delete_items_before(datetime.now(timezone.utc) + timedelta(days=1))
+        == 1
+    )
+    assert stored(path, "SELECT id FROM items") == [(item,)]
+    assert stored(path, "SELECT state FROM publication_claims") == [("sending",)]
+
+
+@pytest.mark.asyncio
+async def test_readiness_does_not_write_database_or_expose_content(database):
+    path, item = database
+    before = path.read_bytes()
+    result = readiness_module().inspect(path)
+    assert result["queued_status_counts"] == {"approved": 1}
+    assert result["claims_table_present"] is True
+    assert result["migration_recorded"] is True
+    assert result["deploy_ready"] is False
+    assert (
+        result["database_writes"]
+        == result["external_requests"]
+        == result["telegram_sends"]
+        == 0
+    )
+    assert "Owner note" not in json.dumps(result)
+    assert path.read_bytes() == before
+
+
+def test_readiness_observes_legacy_database_without_applying_migration(tmp_path):
+    path = tmp_path / "legacy.db"
+    schema = Path(__file__).resolve().parents[1] / "storage/migrations/001_init.sql"
+    with sqlite3.connect(path) as db:
+        db.executescript(schema.read_text(encoding="utf-8"))
+    before = path.read_bytes()
+    result = readiness_module().inspect(path)
+    assert result["claim_state_counts"] is None
+    assert result["migration_recorded"] is False
+    assert path.read_bytes() == before
+    missing = tmp_path / "missing.db"
+    with pytest.raises(sqlite3.OperationalError):
+        readiness_module().inspect(missing)
+    assert not missing.exists()
