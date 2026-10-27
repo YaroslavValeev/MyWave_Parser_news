@@ -227,7 +227,9 @@ print(json.dumps({"external_hooks":calls}))
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=60,
+        # Cold aiogram/Google SDK imports can exceed 60s on the local Docker host.
+        # The workflow itself still has the 25s asyncio limit above and forbids network.
+        timeout=180,
     )
     assert process.returncode == 0, process.stderr[-1000:]
     assert json.loads(process.stdout.splitlines()[-1]) == {"external_hooks": []}
