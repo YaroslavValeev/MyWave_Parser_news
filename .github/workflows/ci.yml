@@ -159,7 +159,8 @@ jobs:
             tests/test_editorial_release.py \
             tests/test_summary_preview.py \
             tests/test_review_article_repair.py \
-            tests/test_publication_service.py
+            tests/test_publication_service.py \
+            tests/test_publication_claims.py
           pytest -q --tb=short \
             tests/test_media_pipeline.py \
             tests/test_telegram_media_hydrate.py \
