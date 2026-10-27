@@ -1,4 +1,5 @@
 """Services responsible for publishing queued items to Telegram."""
+
 from __future__ import annotations
 
 import html
@@ -9,39 +10,13 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, TYPE_CHECKING
 from urllib.parse import urlparse
 import aiosqlite
-try:  # pragma: no cover - allow running tests without tenacity installed
-    from tenacity import RetryError, retry, stop_after_attempt, wait_fixed
-except ImportError:  # pragma: no cover - lightweight fallback
-    class RetryError(Exception):
-        def __init__(self, last_attempt):
-            super().__init__("retry failed")
-            self.last_attempt = last_attempt
-
-    def stop_after_attempt(attempts: int):  # type: ignore[override]
-        return attempts
-
-    def wait_fixed(delay: float):  # type: ignore[override]
-        return delay
-
-    def retry(*, stop=None, wait=None, reraise=False):  # type: ignore[override]
-        def decorator(func):
-            async def wrapper(*args, **kwargs):
-                try:
-                    return await func(*args, **kwargs)
-                except Exception as exc:  # noqa: BLE001
-                    attempt = type(
-                        "Attempt",
-                        (),
-                        {
-                            "attempt_number": 1,
-                            "exception": lambda self, error=exc: error,
-                        },
-                    )()
-                    raise RetryError(attempt) from exc
-
-            return wrapper
-
-        return decorator
+import asyncio
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNotFound,
+    TelegramRetryAfter,
+)
 
 from config.settings import config
 from storage.repository import AsyncNewsRepository
@@ -52,7 +27,11 @@ from utils.card_preview_text import (
     public_text_quality_issues,
     to_card_preview_text,
 )
-from utils.owner_content import build_fallback_merged_text, ensure_merged_owner_post, strip_author_meta_labels
+from utils.owner_content import (
+    build_fallback_merged_text,
+    ensure_merged_owner_post,
+    strip_author_meta_labels,
+)
 from utils.item_context import (
     derive_item_title,
     get_item_text_context,
@@ -66,7 +45,11 @@ from utils.media_utils import (
     normalize_media_ref,
 )
 from utils.telegram_editorial import TELEGRAM_HARD_CHARS
-from utils.telegram_media_input import PHOTO_MAX_BYTES, VIDEO_MAX_BYTES, http_url_as_input_file
+from utils.telegram_media_input import (
+    PHOTO_MAX_BYTES,
+    VIDEO_MAX_BYTES,
+    http_url_as_input_file,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing helper
     from aiogram.types import FSInputFile as AiogramFSInputFile
@@ -108,24 +91,33 @@ async def _send_with_retry(
     delay_seconds: float,
     **kwargs: Any,
 ):
-    """Execute Telegram API call with tenacity-based retries."""
+    """Only retry explicit rate-limit rejection, never an ambiguous transport error."""
+    for counter in range(1, max(1, attempts) + 1):
+        try:
+            return await method(**kwargs), counter
+        except TelegramRetryAfter as exc:
+            if counter >= max(1, attempts):
+                raise PublicationSendError(counter, exc) from exc
+            await asyncio.sleep(max(0.0, delay_seconds, float(exc.retry_after)))
+        except Exception as exc:
+            raise PublicationSendError(counter, exc) from exc
 
-    attempts = max(1, attempts)
-    delay_seconds = max(0.0, delay_seconds)
-    counter = 0
 
-    @retry(stop=stop_after_attempt(attempts), wait=wait_fixed(delay_seconds), reraise=True)
-    async def _invoke():
-        nonlocal counter
-        counter += 1
-        return await method(**kwargs)
+class PartialPublicationError(Exception):
+    """Media was accepted, but the final text delivery could not be completed."""
 
-    try:
-        result = await _invoke()
-        return result, counter
-    except RetryError as exc:  # pragma: no cover - defensive logging
-        cause = exc.last_attempt.exception() or exc
-        raise PublicationSendError(counter, cause) from exc
+
+def _definite_rejection(error: BaseException) -> bool:
+    cause = getattr(error, "cause", error)
+    return isinstance(
+        cause,
+        (
+            TelegramBadRequest,
+            TelegramForbiddenError,
+            TelegramNotFound,
+            TelegramRetryAfter,
+        ),
+    )
 
 
 class PublicationService:
@@ -147,7 +139,9 @@ class PublicationService:
         self._max_attempts = max(1, config.PUBLICATION_MAX_ATTEMPTS)
         self._immediate_attempts = max(1, config.PUBLICATION_IMMEDIATE_RETRIES)
         self._immediate_delay = config.PUBLICATION_IMMEDIATE_DELAY_SECONDS
-        self._retry_max_age_hours = max(0.0, float(config.PUBLICATION_RETRY_MAX_AGE_HOURS))
+        self._retry_max_age_hours = max(
+            0.0, float(config.PUBLICATION_RETRY_MAX_AGE_HOURS)
+        )
 
     async def publish_pending(self, limit: int = 5) -> int:
         """Publish queued items and return number of successes."""
@@ -174,14 +168,21 @@ class PublicationService:
             item_id = item["id"]
             nlp = await self._repository.get_nlp_results(item_id) or {}
             if not self._has_author_notes(nlp):
-                await self._handle_missing_author_notes(item_id, str(item.get("status") or ""))
+                await self._handle_missing_author_notes(
+                    item_id, str(item.get("status") or "")
+                )
                 continue
-            from services.editorial_layers import extract_editorial_layers, publication_allowed
+            from services.editorial_layers import (
+                extract_editorial_layers,
+                publication_allowed,
+            )
 
             layers = extract_editorial_layers(item, nlp)
             allowed, deny_reason = publication_allowed(layers)
             if not allowed:
-                await self._handle_missing_author_notes(item_id, str(item.get("status") or ""))
+                await self._handle_missing_author_notes(
+                    item_id, str(item.get("status") or "")
+                )
                 await self._repository.log_event(
                     item_id,
                     "warning",
@@ -190,7 +191,9 @@ class PublicationService:
                 )
                 continue
             if is_title_only_summary_fallback(item, nlp):
-                await self._handle_untrusted_summary(item_id, str(item.get("status") or ""))
+                await self._handle_untrusted_summary(
+                    item_id, str(item.get("status") or "")
+                )
                 continue
             merged_text = await ensure_merged_owner_post(item, nlp)
             if merged_text and merged_text != str(nlp.get("merged_text") or "").strip():
@@ -208,7 +211,9 @@ class PublicationService:
                 nlp = {**nlp, "merged_text": merged_text}
             quality_issues = self._publication_quality_issues(item, nlp)
             if quality_issues:
-                await self._handle_needs_cleanup(item_id, str(item.get("status") or ""), quality_issues)
+                await self._handle_needs_cleanup(
+                    item_id, str(item.get("status") or ""), quality_issues
+                )
                 continue
             caption = self._build_caption(item, nlp)
             if self._telegram_caption_too_long(caption):
@@ -232,19 +237,51 @@ class PublicationService:
                     )
                 continue
 
+            token = await self._repository.claim_publication(item_id, str(channel_id))
+            if token is None:
+                continue
             try:
                 message = await self._publish_item(channel_id, item)
-            except PublicationSendError as err:
-                await self._handle_failure(item_id, attempt_count + 1, str(err.cause), item=item)
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.exception(
-                    "Unexpected publication failure",
-                    extra={"event": "publication_unexpected_error", "item_id": item_id},
-                )
-                await self._handle_failure(item_id, attempt_count + 1, str(exc), item=item)
+            except (
+                Exception
+            ) as exc:  # cancellation/crash deliberately retains the durable claim
+                if _definite_rejection(exc):
+                    await self._handle_failure(
+                        item_id,
+                        attempt_count + 1,
+                        str(getattr(exc, "cause", exc)),
+                        item=item,
+                    )
+                    await self._repository.release_publication_rejection(item_id, token)
+                else:
+                    await self._repository.mark_publication_unknown(
+                        item_id, token, type(exc).__name__
+                    )
+                    LOGGER.error(
+                        "publication delivery requires reconciliation item_id=%s",
+                        item_id,
+                    )
             else:
-                await self._handle_success(item_id, channel_id, message.message_id, item=item)
+                try:
+                    await self._repository.complete_publication(
+                        item_id, token, str(channel_id), str(message.message_id)
+                    )
+                except Exception:
+                    # Telegram may already have accepted it. Never release/retry this claim.
+                    LOGGER.exception(
+                        "publication ACK bookkeeping failed item_id=%s", item_id
+                    )
+                    raise
                 published += 1
+                try:
+                    await self._handle_success(
+                        item_id, channel_id, message.message_id, item=item
+                    )
+                except Exception:
+                    # Sheets/site failure cannot turn a committed delivery into a retry.
+                    LOGGER.exception(
+                        "publication post-delivery sync failed item_id=%s", item_id
+                    )
         return published
 
     def _is_scheduled_for_future(self, item: Mapping[str, Any]) -> bool:
@@ -296,7 +333,9 @@ class PublicationService:
         if video_ref:
             media_attempts.append(("video", self._bot.send_video, {"video": video_ref}))
         if cover_photo:
-            media_attempts.append(("photo", self._bot.send_photo, {"photo": cover_photo}))
+            media_attempts.append(
+                ("photo", self._bot.send_photo, {"photo": cover_photo})
+            )
         LOGGER.info(
             "publication media item_id=%s kinds=%s text_len=%s",
             item_id,
@@ -314,6 +353,7 @@ class PublicationService:
         # мнением) уходит как медиа без подписи + отдельное текстовое сообщение.
         fits_caption = len(text) <= _CAPTION_LIMIT
         media_sent = False
+
         async def _send_media(method, media_kwargs):
             if fits_caption:
                 result, _ = await send(
@@ -332,6 +372,8 @@ class PublicationService:
             try:
                 result = await _send_media(method, media_kwargs)
             except Exception as err:  # noqa: BLE001
+                if not _definite_rejection(err):
+                    raise
                 cause = getattr(err, "cause", err)
                 LOGGER.warning(
                     "publication media send failed item_id=%s kind=%s error=%s: %s",
@@ -340,7 +382,9 @@ class PublicationService:
                     type(cause).__name__,
                     str(cause)[:200],
                 )
-                if not (isinstance(ref, str) and ref.startswith(("http://", "https://"))):
+                if not (
+                    isinstance(ref, str) and ref.startswith(("http://", "https://"))
+                ):
                     continue
                 # Bot API не смог скачать URL сам — качаем Parser'ом и шлём файлом.
                 uploaded = await http_url_as_input_file(
@@ -352,6 +396,8 @@ class PublicationService:
                 try:
                     result = await _send_media(method, {kind: uploaded})
                 except Exception as retry_err:  # noqa: BLE001
+                    if not _definite_rejection(retry_err):
+                        raise
                     LOGGER.warning(
                         "publication media file retry failed item_id=%s kind=%s error=%s",
                         item_id,
@@ -364,13 +410,20 @@ class PublicationService:
             media_sent = True
             break
 
-        result, _ = await send(
-            self._bot.send_message,
-            chat_id=channel_id,
-            parse_mode="HTML",
-            text=text,
-            disable_web_page_preview=media_sent,
-        )
+        try:
+            result, _ = await send(
+                self._bot.send_message,
+                chat_id=channel_id,
+                parse_mode="HTML",
+                text=text,
+                disable_web_page_preview=media_sent,
+            )
+        except Exception as exc:
+            if media_sent:
+                raise PartialPublicationError(
+                    "partial_delivery_requires_reconciliation"
+                ) from exc
+            raise
         return result
 
     async def _hydrate_media(
@@ -450,14 +503,7 @@ class PublicationService:
         *,
         item: Mapping[str, Any] | None = None,
     ) -> None:
-        await self._repository.update_status(item_id, "published")
-        await self._repository.save_publication(item_id, str(channel_id), str(message_id))
-        await self._repository.log_event(
-            item_id,
-            "info",
-            "publication_sent",
-            {"message_id": message_id, "channel_id": channel_id},
-        )
+        # Receipt/status/log were committed atomically before external synchronization.
         sheet_item = item
         if sheet_item is None and hasattr(self._repository, "get_item"):
             try:
@@ -468,7 +514,9 @@ class PublicationService:
         if sheet_item:
             await sync_publication_result(sheet_item, nlp, published=True)
 
-    async def _handle_missing_author_notes(self, item_id: int, status_from: str) -> None:
+    async def _handle_missing_author_notes(
+        self, item_id: int, status_from: str
+    ) -> None:
         await self._repository.update_status(item_id, "review")
         await self._repository.log_event(
             item_id,
@@ -489,7 +537,9 @@ class PublicationService:
             },
         )
 
-    async def _handle_needs_cleanup(self, item_id: int, status_from: str, issues: list[str]) -> None:
+    async def _handle_needs_cleanup(
+        self, item_id: int, status_from: str, issues: list[str]
+    ) -> None:
         await self._repository.update_status(item_id, "review")
         await self._repository.log_event(
             item_id,
@@ -503,7 +553,9 @@ class PublicationService:
         )
 
     async def _should_attempt(self, item_id: int) -> tuple[int, bool, datetime | None]:
-        last_failure = await self._repository.get_last_log(item_id, "publication_failed")
+        last_failure = await self._repository.get_last_log(
+            item_id, "publication_failed"
+        )
         if last_failure is None:
             return 0, True, None
         meta = last_failure.get("meta") or {}
@@ -517,7 +569,9 @@ class PublicationService:
                 {"attempt": attempt},
             )
             return attempt, False, None
-        delay_minutes = self._retry_minutes[min(attempt - 1, len(self._retry_minutes) - 1)]
+        delay_minutes = self._retry_minutes[
+            min(attempt - 1, len(self._retry_minutes) - 1)
+        ]
         if delay_minutes <= 0:
             return attempt, True, None
         try:
@@ -538,11 +592,15 @@ class PublicationService:
             return self._channel_id
 
     @classmethod
-    def _extract_cover_photo(cls, item: Mapping[str, Any], nlp: Mapping[str, Any]) -> str | AiogramFSInputFile | None:
+    def _extract_cover_photo(
+        cls, item: Mapping[str, Any], nlp: Mapping[str, Any]
+    ) -> str | AiogramFSInputFile | None:
         # Локальный файл (скачан media_pipeline) надёжнее URL: Bot API не нужно ничего качать.
         for key in ("cover_image_url", "image_url", "images"):
             for media_type, raw_candidate in iter_media_candidates(item.get(key)):
-                candidate = normalize_media_ref(raw_candidate, media_type=media_type or "image")
+                candidate = normalize_media_ref(
+                    raw_candidate, media_type=media_type or "image"
+                )
                 if not candidate or candidate.startswith(("http://", "https://")):
                     continue
                 if is_video_ref(candidate, media_type=media_type):
@@ -578,7 +636,9 @@ class PublicationService:
         if not isinstance(cover, Mapping):
             return None
         url = cover.get("url")
-        return cls._cover_photo_input(str(url)) if isinstance(url, str) and url else None
+        return (
+            cls._cover_photo_input(str(url)) if isinstance(url, str) and url else None
+        )
 
     @staticmethod
     def _cover_photo_input(cover_url: str | None) -> str | AiogramFSInputFile | None:
@@ -613,7 +673,9 @@ class PublicationService:
         return bool(str(nlp.get("author_notes") or "").strip())
 
     @staticmethod
-    def _publication_quality_issues(item: Mapping[str, Any], nlp: Mapping[str, Any]) -> list[str]:
+    def _publication_quality_issues(
+        item: Mapping[str, Any], nlp: Mapping[str, Any]
+    ) -> list[str]:
         merged = str(nlp.get("merged_text") or "").strip()
         summary = str(nlp.get("summary") or "").strip()
         body = merged or summary or str(get_item_text_context(item) or "")
@@ -631,7 +693,11 @@ class PublicationService:
     def _extract_video_ref(item: Mapping[str, Any]) -> str | AiogramFSInputFile | None:
         for raw in str(item.get("videos") or "").splitlines():
             normalized = normalize_media_ref(raw.strip())
-            if normalized and not normalized.startswith(("http://", "https://")) and is_video_ref(normalized):
+            if (
+                normalized
+                and not normalized.startswith(("http://", "https://"))
+                and is_video_ref(normalized)
+            ):
                 ref = PublicationService._cover_photo_input(normalized)
                 if ref:
                     return ref
@@ -657,8 +723,12 @@ class PublicationService:
     def _build_caption(item: Mapping[str, Any], nlp: Mapping[str, Any]) -> str:
         summary = str(nlp.get("summary") or "").strip()
         notes = str(nlp.get("author_notes") or "").strip()
-        merged_text = strip_author_meta_labels(str(nlp.get("merged_text") or "").strip())
-        title = html.escape(normalize_public_title(derive_item_title(item, max_len=140)))
+        merged_text = strip_author_meta_labels(
+            str(nlp.get("merged_text") or "").strip()
+        )
+        title = html.escape(
+            normalize_public_title(derive_item_title(item, max_len=140))
+        )
 
         parts: list[str] = []
         if is_title_only_summary_fallback(item, nlp):
@@ -684,8 +754,7 @@ class PublicationService:
                 parts.append(html.escape(short_summary))
             notes_clean = normalize_publication_text(notes, preserve_paragraphs=True)
             parts.append(
-                "<b>💬 Экспертное мнение</b>\n"
-                f"<b>{html.escape(notes_clean)}</b>"
+                "<b>💬 Экспертное мнение</b>\n" f"<b>{html.escape(notes_clean)}</b>"
             )
         elif merged_text:
             body = normalize_publication_text(merged_text, preserve_paragraphs=True)
@@ -710,9 +779,12 @@ class PublicationService:
                 parts.append(html.escape(body))
 
         source_url = str(item.get("link") or item.get("source_url") or "").strip()
-        site_url = str(getattr(config, "PUBLICATION_SITE_URL", "") or "https://mywavewake.ru/").strip()
+        site_url = str(
+            getattr(config, "PUBLICATION_SITE_URL", "") or "https://mywavewake.ru/"
+        ).strip()
         admin_url = str(
-            getattr(config, "PUBLICATION_ADMIN_BOT_URL", "") or "https://t.me/MyWave_Admin_bot"
+            getattr(config, "PUBLICATION_ADMIN_BOT_URL", "")
+            or "https://t.me/MyWave_Admin_bot"
         ).strip()
         footer_bits: list[str] = []
         if source_url.lower().startswith(("http://", "https://")):
@@ -720,9 +792,13 @@ class PublicationService:
                 f'<a href="{html.escape(source_url, quote=True)}">Источник</a>'
             )
         if site_url:
-            footer_bits.append(f'<a href="{html.escape(site_url, quote=True)}">сайт</a>')
+            footer_bits.append(
+                f'<a href="{html.escape(site_url, quote=True)}">сайт</a>'
+            )
         if admin_url:
-            footer_bits.append(f'<a href="{html.escape(admin_url, quote=True)}">тг-админ</a>')
+            footer_bits.append(
+                f'<a href="{html.escape(admin_url, quote=True)}">тг-админ</a>'
+            )
         if footer_bits:
             parts.append(" · ".join(footer_bits))
         return "\n\n".join(p for p in parts if p)

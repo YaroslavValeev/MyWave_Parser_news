@@ -309,10 +309,8 @@ async def probe(db_path, chat_id, item_id, expected_url, *, send=False):
             return None
 
         async def _handle_success(self, local_id, target, message_id, *, item=None):
-            await self._repository.update_status(local_id, "published")
-            await self._repository.save_publication(
-                local_id, str(target), str(message_id)
-            )
+            # The service already committed the receipt in the isolated database.
+            return None
 
         async def _handle_failure(self, local_id, attempt_number, error, *, item=None):
             await self._repository.update_status(local_id, "error")

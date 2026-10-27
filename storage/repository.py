@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Iterable, Mapping, Optional
+from uuid import uuid4
 
 import aiosqlite
 
@@ -87,7 +88,9 @@ async def initialize_database(db_path: Path | str) -> None:
         await conn.close()
 
 
-def _calculate_checksum(link: Optional[str], title: Optional[str], content: Optional[str]) -> str:
+def _calculate_checksum(
+    link: Optional[str], title: Optional[str], content: Optional[str]
+) -> str:
     base = link or "".join(filter(None, [title or "", content or ""]))
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
@@ -417,32 +420,46 @@ class AsyncNewsRepository:
     async def restore_source_review(self, item_id: int) -> None:
         """Return a refused enrichment to review without overriding an Owner decision."""
         async with self._connection() as db:
-            await db.execute("UPDATE items SET status='review' WHERE id=? AND status='processing'", (item_id,))
+            await db.execute(
+                "UPDATE items SET status='review' WHERE id=? AND status='processing'",
+                (item_id,),
+            )
             await db.commit()
 
     async def begin_nlp_processing(self, item: Mapping[str, Any]) -> bool:
         """Claim unchanged source input without overriding a terminal Owner decision."""
         async with self._connection() as db:
             await db.execute("BEGIN IMMEDIATE")
-            row = await (await db.execute("SELECT * FROM items WHERE id=?", (item["id"],))).fetchone()
+            row = await (
+                await db.execute("SELECT * FROM items WHERE id=?", (item["id"],))
+            ).fetchone()
             if row is None or row["status"] in {"discarded", "published"}:
                 return False
             if source_input_hash(dict(row)) != source_input_hash(item):
                 return False
-            await db.execute("UPDATE items SET status='processing' WHERE id=?", (item["id"],))
+            await db.execute(
+                "UPDATE items SET status='processing' WHERE id=?", (item["id"],)
+            )
             await db.commit()
             return True
 
     async def fail_nlp_processing(self, item_id: int) -> None:
         async with self._connection() as db:
-            await db.execute("UPDATE items SET status='error' WHERE id=? AND status='processing'", (item_id,))
+            await db.execute(
+                "UPDATE items SET status='error' WHERE id=? AND status='processing'",
+                (item_id,),
+            )
             await db.commit()
 
-    async def save_source_context(self, item_id: int, evidence: Mapping[str, Any]) -> None:
+    async def save_source_context(
+        self, item_id: int, evidence: Mapping[str, Any]
+    ) -> None:
         """Save bound source evidence without rewriting the original post or media."""
         async with self._connection() as db:
             await db.execute("BEGIN IMMEDIATE")
-            row = await (await db.execute("SELECT * FROM items WHERE id=?", (item_id,))).fetchone()
+            row = await (
+                await db.execute("SELECT * FROM items WHERE id=?", (item_id,))
+            ).fetchone()
             if row is None or row["status"] in {"discarded", "published"}:
                 raise ValueError("source_context_item_unavailable")
             item = dict(row)
@@ -451,8 +468,10 @@ class AsyncNewsRepository:
             item["source_context"] = dict(evidence)
             if linked_article_context(item) is None:
                 raise ValueError("source_context_invalid")
-            await db.execute("UPDATE items SET source_context=? WHERE id=?",
-                             (json.dumps(dict(evidence), ensure_ascii=False), item_id))
+            await db.execute(
+                "UPDATE items SET source_context=? WHERE id=?",
+                (json.dumps(dict(evidence), ensure_ascii=False), item_id),
+            )
             await db.commit()
 
     async def requeue_error_to_new(self, *, limit: int) -> int:
@@ -488,8 +507,12 @@ class AsyncNewsRepository:
         item_status: str | None = None,
         **kwargs: Any,
     ) -> None:
-        q_json = json.dumps(questions, ensure_ascii=False) if questions is not None else None
-        extra_json = json.dumps(extra, ensure_ascii=False) if extra is not None else None
+        q_json = (
+            json.dumps(questions, ensure_ascii=False) if questions is not None else None
+        )
+        extra_json = (
+            json.dumps(extra, ensure_ascii=False) if extra is not None else None
+        )
         if moderation is None:
             mod_str: str | None = None
         elif isinstance(moderation, str):
@@ -500,8 +523,14 @@ class AsyncNewsRepository:
         async with self._connection() as db:
             if expected_source_hash is not None:
                 await db.execute("BEGIN IMMEDIATE")
-                row = await (await db.execute("SELECT * FROM items WHERE id=?", (item_id,))).fetchone()
-                if row is None or row["status"] != "processing" or source_input_hash(dict(row)) != expected_source_hash:
+                row = await (
+                    await db.execute("SELECT * FROM items WHERE id=?", (item_id,))
+                ).fetchone()
+                if (
+                    row is None
+                    or row["status"] != "processing"
+                    or source_input_hash(dict(row)) != expected_source_hash
+                ):
                     raise ValueError("nlp_source_or_status_changed")
             await db.execute(
                 """
@@ -537,12 +566,16 @@ class AsyncNewsRepository:
                 ),
             )
             if item_status is not None:
-                await db.execute("UPDATE items SET status=? WHERE id=?", (item_status, item_id))
+                await db.execute(
+                    "UPDATE items SET status=? WHERE id=?", (item_status, item_id)
+                )
             await db.commit()
 
     async def get_nlp_results(self, item_id: int) -> Optional[dict[str, Any]]:
         async with self._connection() as db:
-            cur = await db.execute("SELECT * FROM nlp_results WHERE item_id = ?", (item_id,))
+            cur = await db.execute(
+                "SELECT * FROM nlp_results WHERE item_id = ?", (item_id,)
+            )
             row = await cur.fetchone()
             if not row:
                 return None
@@ -557,21 +590,43 @@ class AsyncNewsRepository:
     async def _final_post_edit_snapshot(
         self, db: aiosqlite.Connection, item_id: int
     ) -> dict[str, Any]:
-        from utils.item_context import get_item_text_context, is_title_only_summary_fallback
+        from utils.item_context import (
+            get_item_text_context,
+            is_title_only_summary_fallback,
+        )
 
-        item_row = await (await db.execute("SELECT * FROM items WHERE id=?", (item_id,))).fetchone()
-        nlp_row = await (await db.execute("SELECT * FROM nlp_results WHERE item_id=?", (item_id,))).fetchone()
-        published = await (await db.execute("SELECT 1 FROM publications WHERE item_id=?", (item_id,))).fetchone()
-        if not item_row or not nlp_row or item_row["status"] not in {"review", "deferred"} or published:
+        item_row = await (
+            await db.execute("SELECT * FROM items WHERE id=?", (item_id,))
+        ).fetchone()
+        nlp_row = await (
+            await db.execute("SELECT * FROM nlp_results WHERE item_id=?", (item_id,))
+        ).fetchone()
+        published = await (
+            await db.execute("SELECT 1 FROM publications WHERE item_id=?", (item_id,))
+        ).fetchone()
+        if (
+            not item_row
+            or not nlp_row
+            or item_row["status"] not in {"review", "deferred"}
+            or published
+        ):
             raise ValueError("final_post_not_editable")
         item, raw_nlp = dict(item_row), dict(nlp_row)
         nlp = _decode_nlp_row(raw_nlp)
         if not get_item_text_context(item) or is_title_only_summary_fallback(item, nlp):
             raise ValueError("final_post_source_unavailable")
-        return {"item": item, "nlp": nlp, "token": _final_post_edit_token(item, raw_nlp)}
+        return {
+            "item": item,
+            "nlp": nlp,
+            "token": _final_post_edit_token(item, raw_nlp),
+        }
 
     async def save_manual_final_post(
-        self, item_id: int, text: str, *, expected_token: str,
+        self,
+        item_id: int,
+        text: str,
+        *,
+        expected_token: str,
         user_id: int | None = None,
     ) -> None:
         """Replace only the final draft, atomically refusing a stale editing session."""
@@ -593,12 +648,125 @@ class AsyncNewsRepository:
             )
             await db.execute(
                 "INSERT INTO logs (item_id,level,message,meta,created_at) VALUES (?,?,?,?,?)",
-                (item_id, "info", "owner_final_text_edited",
-                 json.dumps({"user_id": user_id, "chars": len(text)}, ensure_ascii=False), now),
+                (
+                    item_id,
+                    "info",
+                    "owner_final_text_edited",
+                    json.dumps(
+                        {"user_id": user_id, "chars": len(text)}, ensure_ascii=False
+                    ),
+                    now,
+                ),
             )
             await db.commit()
 
-    async def save_publication(self, item_id: int, channel_id: str, message_id: str) -> int:
+    async def claim_publication(self, item_id: int, channel_id: str) -> str | None:
+        """Durably reserve one item before any Telegram call; never expire a claim."""
+        token = uuid4().hex
+        now = datetime.now(timezone.utc).isoformat()
+        async with self._connection() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                """INSERT INTO publication_claims
+                   (item_id,token,channel_id,state,created_at,updated_at)
+                   SELECT id,?,?,'sending',?,? FROM items
+                   WHERE id=? AND status IN ('approved','ready_to_publish','publish_retry')
+                     AND NOT EXISTS (SELECT 1 FROM publications WHERE item_id=items.id)
+                     AND NOT EXISTS (SELECT 1 FROM publication_claims WHERE item_id=items.id)""",
+                (token, str(channel_id), now, now, item_id),
+            )
+            await db.commit()
+            return token if cursor.rowcount == 1 else None
+
+    async def release_publication_rejection(self, item_id: int, token: str) -> None:
+        """Only an explicit Telegram rejection permits a later retry."""
+        async with self._connection() as db:
+            await db.execute(
+                "DELETE FROM publication_claims WHERE item_id=? AND token=? AND state='sending'",
+                (item_id, token),
+            )
+            await db.commit()
+
+    async def mark_publication_unknown(
+        self, item_id: int, token: str, error_type: str
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        async with self._connection() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(
+                "UPDATE publication_claims SET state='unknown',updated_at=? WHERE item_id=? AND token=? AND state='sending'",
+                (now, item_id, token),
+            )
+            if cursor.rowcount == 1:
+                await db.execute(
+                    "UPDATE items SET status='error',updated_at=? WHERE id=?",
+                    (now, item_id),
+                )
+                await db.execute(
+                    "INSERT INTO logs (item_id,level,message,meta,created_at) VALUES (?,?,?,?,?)",
+                    (
+                        item_id,
+                        "error",
+                        "publication_delivery_unknown",
+                        json.dumps({"claim": token, "error_type": error_type}),
+                        now,
+                    ),
+                )
+            await db.commit()
+
+    async def complete_publication(
+        self, item_id: int, token: str, channel_id: str, message_id: str
+    ) -> int:
+        """Commit ACK, item state and audit log together; a failed commit retains the claim."""
+        if not str(message_id).isdigit() or int(message_id) <= 0:
+            raise ValueError("invalid_publication_message_id")
+        now = datetime.now(timezone.utc).isoformat()
+        async with self._connection() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            claim = await (
+                await db.execute(
+                    "SELECT * FROM publication_claims WHERE item_id=? AND token=? AND channel_id=?",
+                    (item_id, token, str(channel_id)),
+                )
+            ).fetchone()
+            if claim is None or claim["state"] != "sending":
+                raise ValueError("publication_claim_unavailable")
+            cursor = await db.execute(
+                "INSERT INTO publications (item_id,channel_id,message_id,published_at) VALUES (?,?,?,?)",
+                (item_id, str(channel_id), str(message_id), now),
+            )
+            publication_id = int(cursor.lastrowid)
+            await db.execute(
+                "UPDATE items SET status='published',updated_at=? WHERE id=?",
+                (now, item_id),
+            )
+            await db.execute(
+                "UPDATE publication_claims SET state='delivered',message_id=?,updated_at=? WHERE item_id=? AND token=?",
+                (str(message_id), now, item_id, token),
+            )
+            await db.execute(
+                "INSERT INTO logs (item_id,level,message,meta,created_at) VALUES (?,?,?,?,?)",
+                (
+                    item_id,
+                    "info",
+                    "publication_sent",
+                    json.dumps(
+                        {
+                            "publication_id": publication_id,
+                            "claim": token,
+                            "message_id": str(message_id),
+                            "channel_id": str(channel_id),
+                        }
+                    ),
+                    now,
+                ),
+            )
+            await db.commit()
+            return publication_id
+
+    async def save_publication(
+        self, item_id: int, channel_id: str, message_id: str
+    ) -> int:
         now = datetime.now(timezone.utc).isoformat()
         async with self._connection() as db:
             cur = await db.execute(
@@ -637,7 +805,9 @@ class AsyncNewsRepository:
             await db.commit()
             return int(cur.lastrowid)
 
-    async def get_last_log(self, item_id: int, message: str) -> Optional[dict[str, Any]]:
+    async def get_last_log(
+        self, item_id: int, message: str
+    ) -> Optional[dict[str, Any]]:
         async with self._connection() as db:
             cur = await db.execute(
                 """
@@ -741,18 +911,23 @@ class AsyncNewsRepository:
         cutoff_s = cutoff.isoformat()
         async with self._connection() as db:
             cur = await db.execute(
-                "DELETE FROM items WHERE datetime(created_at) < datetime(?)",
+                """DELETE FROM items WHERE datetime(created_at) < datetime(?)
+                   AND NOT EXISTS (SELECT 1 FROM publication_claims WHERE item_id=items.id)""",
                 (cutoff_s,),
             )
             await db.commit()
             return int(cur.rowcount)
 
-    async def list_publication_candidates(self, *, limit: int = 10) -> list[dict[str, Any]]:
+    async def list_publication_candidates(
+        self, *, limit: int = 10
+    ) -> list[dict[str, Any]]:
         async with self._connection() as db:
             cur = await db.execute(
                 """
                 SELECT * FROM items
                 WHERE status IN ('approved', 'ready_to_publish', 'publish_retry')
+                  AND NOT EXISTS (SELECT 1 FROM publication_claims WHERE item_id=items.id)
+                  AND NOT EXISTS (SELECT 1 FROM publications WHERE item_id=items.id)
                 ORDER BY
                     CASE status
                         WHEN 'ready_to_publish' THEN 0
@@ -772,7 +947,9 @@ class AsyncNewsRepository:
 
     async def get_status_counts(self) -> dict[str, int]:
         async with self._connection() as db:
-            cur = await db.execute("SELECT status, COUNT(*) AS c FROM items GROUP BY status")
+            cur = await db.execute(
+                "SELECT status, COUNT(*) AS c FROM items GROUP BY status"
+            )
             rows = await cur.fetchall()
             out: dict[str, int] = {}
             for row in rows:
@@ -784,7 +961,9 @@ class AsyncNewsRepository:
             cur = await db.execute("SELECT COUNT(*) FROM items WHERE status = 'new'")
             row = await cur.fetchone()
             pending = int(row[0]) if row else 0
-            cur2 = await db.execute("SELECT COUNT(*) FROM items WHERE status = 'processing'")
+            cur2 = await db.execute(
+                "SELECT COUNT(*) FROM items WHERE status = 'processing'"
+            )
             row2 = await cur2.fetchone()
             processing = int(row2[0]) if row2 else 0
         return {"nlp_pending": pending, "nlp_processing": processing}
@@ -796,6 +975,8 @@ class AsyncNewsRepository:
                 """
                 SELECT COUNT(*) FROM items
                 WHERE status IN ('approved', 'ready_to_publish', 'publish_retry')
+                  AND NOT EXISTS (SELECT 1 FROM publication_claims WHERE item_id=items.id)
+                  AND NOT EXISTS (SELECT 1 FROM publications WHERE item_id=items.id)
                 """
             )
             row = await cur.fetchone()

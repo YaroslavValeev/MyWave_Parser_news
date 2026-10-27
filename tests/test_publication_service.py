@@ -3,6 +3,16 @@ import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from services.publication import PublicationService, PublicationSendError
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import SendMessage
+
+
+def rejection(message):
+    return TelegramBadRequest(
+        method=SendMessage(chat_id=42, text="test"), message=message
+    )
+
+
 from storage.repository import AsyncNewsRepository
 
 
@@ -24,6 +34,28 @@ class DummyRepo(AsyncNewsRepository):
         self._store = {}
         self._nlp = {1: {"summary": "short summary", "author_notes": "owner note"}}
 
+    async def claim_publication(self, item_id, channel_id):
+        state = self._store.setdefault(item_id, {})
+        if state.get("claim") or state.get("pub"):
+            return None
+        state["claim"] = "fixture-claim"
+        return state["claim"]
+
+    async def release_publication_rejection(self, item_id, token):
+        self._store[item_id].pop("claim", None)
+
+    async def mark_publication_unknown(self, item_id, token, error_type):
+        await self.update_status(item_id, "error")
+        await self.log_event(
+            item_id, "error", "publication_delivery_unknown", {"error_type": error_type}
+        )
+
+    async def complete_publication(self, item_id, token, channel_id, message_id):
+        await self.update_status(item_id, "published")
+        await self.save_publication(item_id, channel_id, message_id)
+        await self.log_event(item_id, "info", "publication_sent")
+        return 1
+
     async def get_last_log(self, item_id, message):
         logs = self._store.setdefault(item_id, {}).setdefault("logs", [])
         for _level, msg, meta in reversed(logs):
@@ -35,9 +67,7 @@ class DummyRepo(AsyncNewsRepository):
         return None
 
     async def list_publication_candidates(self, limit=10):
-        return [
-            {"id": 1, "title": "T", "content": "C", "link": "http://x"}
-        ]
+        return [{"id": 1, "title": "T", "content": "C", "link": "http://x"}]
 
     async def get_nlp_results(self, item_id: int):
         return self._nlp.get(item_id, {})
@@ -56,7 +86,9 @@ class DummyRepo(AsyncNewsRepository):
         self._store.setdefault(item_id, {})["pub"] = (channel_id, message_id)
 
     async def log_event(self, item_id, level, message, meta=None):
-        self._store.setdefault(item_id, {}).setdefault("logs", []).append((level, message, meta))
+        self._store.setdefault(item_id, {}).setdefault("logs", []).append(
+            (level, message, meta)
+        )
 
 
 @pytest.mark.asyncio
@@ -93,7 +125,9 @@ async def test_publish_uses_item_image_as_cover():
 
     assert published == 1
     bot.send_photo.assert_awaited_once()
-    assert bot.send_photo.await_args.kwargs["photo"] == "https://cdn.example.com/cover.jpg"
+    assert (
+        bot.send_photo.await_args.kwargs["photo"] == "https://cdn.example.com/cover.jpg"
+    )
 
 
 def _repo_with_cover_item():
@@ -138,7 +172,7 @@ async def test_publish_long_text_sends_photo_then_text():
 async def test_publish_falls_back_to_text_when_photo_fails():
     repo = _repo_with_cover_item()
     bot = MagicMock()
-    bot.send_photo = AsyncMock(side_effect=RuntimeError("wrong file identifier"))
+    bot.send_photo = AsyncMock(side_effect=rejection("wrong file identifier"))
     bot.send_message = AsyncMock(return_value=MagicMock(message_id=12))
     svc = PublicationService(repo, bot, channel_id="42")
 
@@ -149,16 +183,24 @@ async def test_publish_falls_back_to_text_when_photo_fails():
     assert repo._store[1]["pub"] == ("42", "12")
 
 
-def test_cover_photo_input_rejects_telegram_page_and_missing_local(monkeypatch, tmp_path):
+def test_cover_photo_input_rejects_telegram_page_and_missing_local(
+    monkeypatch, tmp_path
+):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("services.publication.FSInputFile", lambda path: ("file", path))
     (tmp_path / "downloads").mkdir()
     (tmp_path / "downloads" / "55.jpg").write_bytes(b"jpeg")
 
-    assert PublicationService._cover_photo_input("https://t.me/wakedivision/123") is None
+    assert (
+        PublicationService._cover_photo_input("https://t.me/wakedivision/123") is None
+    )
     assert PublicationService._cover_photo_input("downloads/missing.jpg") is None
-    assert PublicationService._cover_photo_input("downloads/55.jpg") == ("file", "downloads\\55.jpg") or (
-        PublicationService._cover_photo_input("downloads/55.jpg") == ("file", "downloads/55.jpg")
+    assert PublicationService._cover_photo_input("downloads/55.jpg") == (
+        "file",
+        "downloads\\55.jpg",
+    ) or (
+        PublicationService._cover_photo_input("downloads/55.jpg")
+        == ("file", "downloads/55.jpg")
     )
 
 
@@ -180,7 +222,7 @@ async def test_publish_tries_photo_when_video_fails():
 
     repo.list_publication_candidates = list_candidates  # type: ignore[method-assign]
     bot = MagicMock()
-    bot.send_video = AsyncMock(side_effect=RuntimeError("file too big"))
+    bot.send_video = AsyncMock(side_effect=rejection("file too big"))
     bot.send_photo = AsyncMock(return_value=MagicMock(message_id=21))
     bot.send_message = AsyncMock(return_value=MagicMock(message_id=22))
     svc = PublicationService(repo, bot, channel_id="42")
@@ -201,7 +243,7 @@ async def test_publish_retries_photo_as_file_when_url_rejected(monkeypatch):
     async def send_photo(**kwargs):
         calls.append(kwargs["photo"])
         if isinstance(kwargs["photo"], str):
-            raise RuntimeError("failed to get HTTP URL content")
+            raise rejection("failed to get HTTP URL content")
         return MagicMock(message_id=41)
 
     async def fake_download(url, **kwargs):
@@ -229,7 +271,10 @@ async def test_publish_hydrates_media_when_item_has_none(monkeypatch):
     svc = PublicationService(repo, bot, channel_id="42")
 
     async def fake_hydrate(item_id, item):
-        return {**item, "images": "https://mywavewake.ru/static/uploads/review_media/tg.jpg"}
+        return {
+            **item,
+            "images": "https://mywavewake.ru/static/uploads/review_media/tg.jpg",
+        }
 
     svc._hydrate_media = fake_hydrate  # type: ignore[method-assign]
 
@@ -240,7 +285,9 @@ async def test_publish_hydrates_media_when_item_has_none(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_publish_skips_localhost_cover_and_uses_local_static_file(monkeypatch, tmp_path):
+async def test_publish_skips_localhost_cover_and_uses_local_static_file(
+    monkeypatch, tmp_path
+):
     repo = DummyRepo()
     local_file = tmp_path / "downloads" / "cover.jpg"
     local_file.parent.mkdir(parents=True)
@@ -268,12 +315,16 @@ async def test_publish_skips_localhost_cover_and_uses_local_static_file(monkeypa
 
     assert published == 1
     bot.send_photo.assert_awaited_once()
-    assert bot.send_photo.await_args.kwargs["photo"] == ("file", str(local_file.relative_to(tmp_path)))
+    assert bot.send_photo.await_args.kwargs["photo"] == (
+        "file",
+        str(local_file.relative_to(tmp_path)),
+    )
 
 
 @pytest.mark.asyncio
 async def test_publish_failure_retry():
     repo = DummyRepo()
+
     class BadBot:
         async def send_message(self, **kwargs):
             raise Exception("boom")
@@ -418,7 +469,10 @@ async def test_publish_blocks_item_without_owner_comment():
     assert published == 0
     bot.send_message.assert_not_awaited()
     assert repo._store[1]["status"] == "review"
-    assert any(msg == "publication_blocked_missing_author_note" for _lvl, msg, _meta in repo._store[1]["logs"])
+    assert any(
+        msg == "publication_blocked_missing_author_note"
+        for _lvl, msg, _meta in repo._store[1]["logs"]
+    )
 
 
 @pytest.mark.asyncio
@@ -451,7 +505,10 @@ async def test_publish_blocks_title_only_summary_fallback_even_with_owner_commen
     assert published == 0
     bot.send_message.assert_not_awaited()
     assert repo._store[1]["status"] == "review"
-    assert any(msg == "publication_blocked_untrusted_summary" for _lvl, msg, _meta in repo._store[1]["logs"])
+    assert any(
+        msg == "publication_blocked_untrusted_summary"
+        for _lvl, msg, _meta in repo._store[1]["logs"]
+    )
 
 
 def test_build_caption_uses_safe_title_and_avoids_title_only_summary_fallback():
@@ -542,36 +599,11 @@ def test_build_caption_prefers_summary_and_raw_owner_notes():
 def test_telegram_caption_hard_limit_gate():
     from utils.telegram_editorial import TELEGRAM_HARD_CHARS
 
-    assert PublicationService._telegram_caption_too_long("x" * TELEGRAM_HARD_CHARS) is False
-    assert PublicationService._telegram_caption_too_long("x" * (TELEGRAM_HARD_CHARS + 1)) is True
-
-
-@pytest.mark.asyncio
-async def test_retry_fallback_preserves_exception_without_tenacity(monkeypatch):
-    import builtins
-    import importlib.util
-
-    original_import = builtins.__import__
-
-    def without_tenacity(name, *args, **kwargs):
-        if name == "tenacity":
-            raise ImportError("tenacity unavailable for fallback regression")
-        return original_import(name, *args, **kwargs)
-
-    import services.publication as publication
-
-    spec = importlib.util.spec_from_file_location("publication_fallback_test", publication.__file__)
-    module = importlib.util.module_from_spec(spec)
-    with monkeypatch.context() as context:
-        context.setattr(builtins, "__import__", without_tenacity)
-        spec.loader.exec_module(module)
-    original_error = ValueError("delivery failed")
-
-    @module.retry(stop=module.stop_after_attempt(1), wait=module.wait_fixed(0))
-    async def delivery():
-        raise original_error
-
-    with pytest.raises(module.RetryError) as caught:
-        await delivery()
-    assert caught.value.last_attempt.exception() is original_error
-    assert caught.value.__cause__ is original_error
+    assert (
+        PublicationService._telegram_caption_too_long("x" * TELEGRAM_HARD_CHARS)
+        is False
+    )
+    assert (
+        PublicationService._telegram_caption_too_long("x" * (TELEGRAM_HARD_CHARS + 1))
+        is True
+    )
