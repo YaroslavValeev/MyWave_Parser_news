@@ -117,20 +117,27 @@ def command(args, **kwargs):
 
 
 def service(*args):
-    return command(["systemctl", *args, SERVICE, "--no-pager"])
+    return command(["systemctl", *args, SERVICE, "--no-pager", "--full"])
 
 
 def service_state():
     result = {}
     for line in service(
-        "show", "--property=MainPID,ActiveState,WorkingDirectory,ExecStart"
+        "show",
+        "--property=MainPID,ActiveState,WorkingDirectory,ExecStart,ExecStartPre,ExecStartPost,ExecStop,ExecStopPost",
     ).splitlines():
         key, _, value = line.partition("=")
         result[key] = value
     if result.get("WorkingDirectory") != str(ROOT):
         raise ReleaseError("service_directory_changed")
-    if str(ROOT / "bot_aiogram.py") not in result.get("ExecStart", ""):
+    expected_argv = f"argv[]={ROOT / 'venv/bin/python3'} {ROOT / 'bot_aiogram.py'} ;"
+    if expected_argv not in result.get("ExecStart", ""):
         raise ReleaseError("service_entrypoint_changed")
+    if any(
+        result.get(key)
+        for key in ("ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost")
+    ):
+        raise ReleaseError("service_has_unreviewed_hooks")
     return result
 
 
@@ -144,7 +151,10 @@ def writers(expected_pid, proc=Path("/proc")):
             args = [value.decode("utf-8", errors="replace") for value in args if value]
             if not args:
                 continue
-            cwd = (entry / "cwd").resolve(strict=True)
+            try:
+                cwd = (entry / "cwd").resolve(strict=True)
+            except FileNotFoundError:
+                cwd = None
             python = "python" in Path(args[0]).name
             relevant = any(Path(value).name == "bot_aiogram.py" for value in args)
             relevant |= python and (

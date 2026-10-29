@@ -414,6 +414,74 @@ def test_owner_edit_during_atomic_install_is_not_overwritten(installation, monke
     assert state["ActiveState"] == "inactive"
 
 
+def unit_description(**changes):
+    values = {
+        "MainPID": "716",
+        "ActiveState": "active",
+        "WorkingDirectory": str(RELEASE.ROOT),
+        "ExecStart": f"{{ path={RELEASE.ROOT / 'venv/bin/python3'} ; argv[]={RELEASE.ROOT / 'venv/bin/python3'} {RELEASE.ROOT / 'bot_aiogram.py'} ; }}",
+        "ExecStartPre": "",
+        "ExecStartPost": "",
+        "ExecStop": "",
+        "ExecStopPost": "",
+    }
+    values.update(changes)
+    return "\n".join(f"{key}={value}" for key, value in values.items())
+
+
+def test_service_metadata_accepts_the_observed_canonical_entrypoint(monkeypatch):
+    monkeypatch.setattr(RELEASE, "service", lambda *args: unit_description())
+    assert RELEASE.service_state()["MainPID"] == "716"
+
+
+@pytest.mark.parametrize(
+    "hook", ["ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost"]
+)
+def test_unreviewed_unit_hooks_block_before_any_stop(monkeypatch, hook):
+    monkeypatch.setattr(
+        RELEASE,
+        "service",
+        lambda *args: unit_description(**{hook: "unreviewed-command"}),
+    )
+    with pytest.raises(RELEASE.ReleaseError, match="service_has_unreviewed_hooks"):
+        RELEASE.service_state()
+
+
+def test_sender_with_deleted_working_directory_is_not_missed(tmp_path, monkeypatch):
+    proc = tmp_path / "proc"
+    entry = proc / "100003"
+    entry.mkdir(parents=True)
+    (entry / "cmdline").write_bytes(b"python\0/app/bot_aiogram.py\0")
+    with pytest.raises(RELEASE.ReleaseError, match="unexpected_publication_processes"):
+        RELEASE.writers(0, proc)
+
+
+def test_stop_failure_after_activation_is_not_reported_as_paused(
+    installation, monkeypatch, capsys
+):
+    root, stage, backups, state, calls = installation
+    actual = RELEASE.service
+    activated = False
+
+    def service(action, *args):
+        nonlocal activated
+        if action == "stop" and activated:
+            raise RELEASE.ReleaseError("fixture_stop_failed")
+        actual(action, *args)
+        if action == "start":
+            activated = True
+            state["MainPID"] = (
+                "0"  # force failed health without proving a stopped service
+            )
+
+    monkeypatch.setattr(RELEASE, "service", service)
+    with pytest.raises(RELEASE.ReleaseError, match="service_health_failed"):
+        RELEASE.execute(MANIFEST, PAYLOAD, apply=True)
+    result = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert result["service_left_stopped"] is False
+    RELEASE.verify(root, MANIFEST["after"])
+
+
 def test_isolated_payload_workflow_uses_fake_transports_and_no_live_environment(
     tmp_path, monkeypatch
 ):
