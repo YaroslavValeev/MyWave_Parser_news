@@ -6,6 +6,8 @@ scripts/releases/runtime-alignment/* -text
 scripts/releases/runtime-alignment/overlay.patch -whitespace
 scripts/releases/manual-final-post/* -text
 scripts/releases/manual-final-post/overlay.patch -whitespace
+scripts/releases/publication-guard/* -text
+scripts/deploy_publication_guard.py text eol=lf
 scripts/deploy_editorial_release.py text eol=lf
 scripts/editorial_offline_smoke.py text eol=lf
 scripts/preview_article_summary.py text eol=lf
