@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main, dev, feat/p0-security-cleanup, feat/blog-editorial-media-pipeline ]
   pull_request:
-    branches: [ main, dev, feat/p0-security-cleanup, feat/blog-editorial-media-pipeline, fix/publication-retry-exception ]
+    branches: [ main, dev, feat/p0-security-cleanup, feat/blog-editorial-media-pipeline, fix/publication-retry-exception, fix/publication-guard-20261027 ]
 
 jobs:
   secret-scan-tree:
@@ -160,7 +160,8 @@ jobs:
             tests/test_summary_preview.py \
             tests/test_review_article_repair.py \
             tests/test_publication_service.py \
-            tests/test_publication_claims.py
+            tests/test_publication_claims.py \
+            tests/test_publication_guard_release.py
           pytest -q --tb=short \
             tests/test_media_pipeline.py \
             tests/test_telegram_media_hydrate.py \
