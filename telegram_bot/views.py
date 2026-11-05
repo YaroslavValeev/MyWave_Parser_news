@@ -1329,6 +1329,7 @@ def format_stats(
     metrics: Mapping[str, Any] | None,
     *,
     channel_commenters: int | None = None,
+    group_authors: int | None = None,
     source_health: list[Mapping[str, Any]] | None = None,
 ) -> str:
     """Краткая сводка: счётчики по статусам и очередь NLP (/stats, кнопка «Статус»)."""
@@ -1345,6 +1346,8 @@ def format_stats(
     )
     if channel_commenters is not None:
         lines.extend(["", "<b>Комментаторы канала</b>", f"В базе: {channel_commenters}"])
+    if group_authors is not None:
+        lines.extend(["", "<b>Авторы групп</b>", f"В базе: {group_authors}"])
     lines.append(format_collect_report_html(load_collect_report()))
     try:
         from config.settings import config

@@ -954,6 +954,131 @@ class AsyncNewsRepository:
             await db.commit()
         return len(ids)
 
+    async def upsert_group_authors(self, records: Iterable[Mapping[str, Any]]) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        n = 0
+        async with self._connection() as db:
+            for rec in records:
+                aid = str(rec.get("author_id") or "").strip()
+                if not aid:
+                    continue
+                await db.execute(
+                    """
+                    INSERT INTO group_authors (
+                        author_id, group_id, group_title, user_id, user_name,
+                        last_message_id, last_message_at, message_snippet, messages_seen,
+                        source_name, synced_to_sheet, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    ON CONFLICT(author_id) DO UPDATE SET
+                        group_title = excluded.group_title,
+                        user_id = excluded.user_id,
+                        user_name = excluded.user_name,
+                        last_message_id = excluded.last_message_id,
+                        last_message_at = excluded.last_message_at,
+                        message_snippet = excluded.message_snippet,
+                        messages_seen = group_authors.messages_seen + COALESCE(excluded.messages_seen, 1),
+                        source_name = excluded.source_name,
+                        synced_to_sheet = 0,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        aid,
+                        rec.get("group_id") or "",
+                        rec.get("group_title"),
+                        rec.get("user_id"),
+                        rec.get("user_name"),
+                        rec.get("last_message_id"),
+                        rec.get("last_message_at"),
+                        rec.get("message_snippet"),
+                        int(rec.get("messages_seen") or 1),
+                        rec.get("source_name"),
+                        now,
+                        now,
+                    ),
+                )
+                n += 1
+            await db.commit()
+        return n
+
+    async def count_group_authors(self) -> int:
+        async with self._connection() as db:
+            cur = await db.execute("SELECT COUNT(*) FROM group_authors")
+            row = await cur.fetchone()
+            return int(row[0]) if row else 0
+
+    async def list_group_authors_unsynced(
+        self, *, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        async with self._connection() as db:
+            cur = await db.execute(
+                """
+                SELECT * FROM group_authors
+                WHERE synced_to_sheet = 0
+                ORDER BY datetime(updated_at) DESC
+                LIMIT ?
+                """,
+                (max(1, limit),),
+            )
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+    async def mark_group_authors_synced(self, author_ids: Iterable[str]) -> int:
+        ids = [str(x).strip() for x in author_ids if str(x).strip()]
+        if not ids:
+            return 0
+        now = datetime.now(timezone.utc).isoformat()
+        async with self._connection() as db:
+            for aid in ids:
+                await db.execute(
+                    """
+                    UPDATE group_authors
+                    SET synced_to_sheet = 1, updated_at = ?
+                    WHERE author_id = ?
+                    """,
+                    (now, aid),
+                )
+            await db.commit()
+        return len(ids)
+
+    async def get_group_authors_checkpoints(self, group_ids: Iterable[str]) -> dict[str, int]:
+        ids = [str(x).strip() for x in group_ids if str(x).strip()]
+        if not ids:
+            return {}
+        out: dict[str, int] = {}
+        async with self._connection() as db:
+            for gid in ids:
+                cur = await db.execute(
+                    "SELECT last_message_id FROM group_authors_checkpoints WHERE group_id = ?",
+                    (gid,),
+                )
+                row = await cur.fetchone()
+                if row:
+                    out[gid] = int(row["last_message_id"] or 0)
+        return out
+
+    async def upsert_group_authors_checkpoints(self, checkpoints: Mapping[str, int]) -> None:
+        if not checkpoints:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        async with self._connection() as db:
+            for gid, mid in checkpoints.items():
+                key = str(gid).strip()
+                if not key:
+                    continue
+                await db.execute(
+                    """
+                    INSERT INTO group_authors_checkpoints (
+                        group_id, last_message_id, last_scanned_at, updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(group_id) DO UPDATE SET
+                        last_message_id = excluded.last_message_id,
+                        last_scanned_at = excluded.last_scanned_at,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, int(mid or 0), now, now),
+                )
+            await db.commit()
+
     async def upsert_source_health(self, tick: Mapping[str, Any]) -> None:
         """Записать метрики одного тика сбора по источнику (Stage 1 telemetry)."""
         key = str(tick.get("source_key") or "").strip()

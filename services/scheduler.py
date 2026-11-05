@@ -23,6 +23,7 @@ from telegram_bot.views import format_stats
 from services.owner_audit_export import run_owner_audit_export
 from services.competitions_ticker_sync import archive_past_competitions
 from services.channel_engagement import run_channel_engagement
+from services.group_authors_engagement import run_group_authors_collect
 
 LOGGER = logging.getLogger(__name__)
 
@@ -127,6 +128,17 @@ class SchedulerService:
                 ),
                 name="collect_engagement",
                 id="collect_engagement",
+                replace_existing=True,
+            )
+        if getattr(config, "GROUP_AUTHORS_COLLECT_ENABLED", False):
+            self._scheduler.add_job(
+                self._collect_group_authors_job,
+                CronTrigger(
+                    hour=int(getattr(config, "GROUP_AUTHORS_CRON_HOUR", 5)),
+                    minute=int(getattr(config, "GROUP_AUTHORS_CRON_MINUTE", 0)),
+                ),
+                name="collect_group_authors",
+                id="collect_group_authors",
                 replace_existing=True,
             )
         if getattr(config, "COMPETITIONS_COLLECT_ENABLED", False):
@@ -280,6 +292,19 @@ class SchedulerService:
             )
         except Exception:  # noqa: BLE001
             LOGGER.exception("collect_engagement job failed")
+
+    async def _collect_group_authors_job(self) -> None:
+        try:
+            result = await run_group_authors_collect(sync_sheet=True, use_chunk=True)
+            LOGGER.info(
+                "collect_group_authors job saved_db=%s sheet_up=%s sheet_app=%s authors=%s",
+                result.saved_db,
+                result.sheet_updated,
+                result.sheet_appended,
+                result.stats.authors_collected if result.stats else 0,
+            )
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("collect_group_authors job failed")
 
     async def _competitions_collect_job(self) -> None:
         try:

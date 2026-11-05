@@ -161,6 +161,28 @@ async def count_channel_commenters() -> int:
     return await _REPOSITORY.count_channel_commenters()
 
 
+async def save_group_authors(records: Iterable[dict]) -> int:
+    """Сохранить авторов сообщений групп в SQLite."""
+    await _ensure_initialized()
+    normalized: list[dict] = []
+    for rec in records:
+        aid = str(rec.get("author_id") or "").strip()
+        if not aid:
+            continue
+        normalized.append(dict(rec))
+    if not normalized:
+        return 0
+    n = await _REPOSITORY.upsert_group_authors(normalized)
+    if n:
+        LOGGER.info("Persisted %s group_authors rows", n)
+    return n
+
+
+async def count_group_authors() -> int:
+    await _ensure_initialized()
+    return await _REPOSITORY.count_group_authors()
+
+
 async def get_latest_news(limit: int = 10) -> list[dict]:
     await _ensure_initialized()
     return await _REPOSITORY.list_items(limit=limit)
@@ -230,6 +252,8 @@ __all__ = [
     "save_contacts",
     "save_channel_commenters",
     "count_channel_commenters",
+    "save_group_authors",
+    "count_group_authors",
     "get_latest_news",
     "clear_old_news",
     "get_repository",

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from config.settings import config
 from utils.channel_commenters_contract import (
@@ -12,6 +12,8 @@ from utils.channel_commenters_contract import (
     build_user_messages_row,
     validate_user_messages_headers,
 )
+
+RowBuilder = Callable[[Mapping[str, Any]], dict[str, str]]
 from utils.sheet_gateway import get_worksheet, init_sheet_gateway, update_item
 
 LOGGER = logging.getLogger(__name__)
@@ -55,6 +57,7 @@ async def sync_records_to_user_messages(
     records: list[Mapping[str, Any]],
     *,
     lookup_field: str = "message_id",
+    row_builder: RowBuilder | None = None,
 ) -> dict[str, int]:
     """Upsert строк в user_messages. Новые — append, существующие — update."""
     stats = {"input": len(records), "updated": 0, "appended": 0, "skipped": 0, "errors": 0}
@@ -63,6 +66,7 @@ async def sync_records_to_user_messages(
     if not records:
         return stats
 
+    builder = row_builder or build_user_messages_row
     doc = await init_sheet_gateway()
     if not doc:
         stats["errors"] = len(records)
@@ -72,7 +76,7 @@ async def sync_records_to_user_messages(
 
     to_append: list[dict[str, Any]] = []
     for rec in records:
-        row = build_user_messages_row(rec)
+        row = builder(rec)
         mid = str(row.get("message_id") or "").strip()
         if not mid:
             stats["skipped"] += 1
