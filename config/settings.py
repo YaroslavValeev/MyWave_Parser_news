@@ -116,11 +116,14 @@ class Config:
     ENGAGEMENT_CRON_HOUR = int(os.getenv("ENGAGEMENT_CRON_HOUR", "4"))
     ENGAGEMENT_CRON_MINUTE = int(os.getenv("ENGAGEMENT_CRON_MINUTE", "30"))
     USER_MESSAGES_SHEET_NAME = os.getenv("USER_MESSAGES_SHEET_NAME", "user_messages")
-    # Авторы сообщений в обычных группах → group_authors + тот же user_messages
-    # Owner: сразу cron + фиксированный список wakesurf-групп.
+    # Авторы сообщений / discussion клубов Москвы → group_authors + user_messages
+    # OSINT 2026-11-06: только город Москва (без МО и смежных медиа).
+    # Подтверждённые ID: SportStation, WakeDivision; остальное — @username.
     _DEFAULT_GROUP_AUTHORS_IDS = (
-        "3099511486,1701957243,1606459352,1791775467,"
-        "2441251847,1738625669,2147018906,1124621462"
+        "@sportstation_club,@WAKEPARKSTROGINO,@wavehuntersclub,@wakestyleclub,"
+        "@GOODWAVEStg,@wakedivision,@moscow_wakeschool,@wakesurfclubES,"
+        "@wakeshark_telegram,@fenixwakeschool,@wakechance,@riverclubsurf,"
+        "1609224876,1124621462"
     )
     GROUP_AUTHORS_COLLECT_ENABLED = (
         os.getenv("GROUP_AUTHORS_COLLECT_ENABLED", "true").lower() == "true"

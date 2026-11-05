@@ -15,7 +15,7 @@ from services.user_messages_sync import sync_records_to_user_messages
 from storage.data import save_group_authors
 from utils.group_authors_contract import (
     build_user_messages_row,
-    parse_group_ids,
+    parse_group_targets,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class GroupAuthorsRunResult:
 
 
 def configured_group_ids() -> list[str]:
-    return parse_group_ids(str(getattr(config, "GROUP_AUTHORS_IDS", "") or ""))
+    return parse_group_targets(str(getattr(config, "GROUP_AUTHORS_IDS", "") or ""))
 
 
 def _chunk_index_path() -> Path:
@@ -150,7 +150,7 @@ async def run_group_authors_collect(
 
         repo = await get_repository()
         if group_id:
-            targets = parse_group_ids(group_id) or [str(group_id).strip()]
+            targets = parse_group_targets(group_id) or [str(group_id).strip()]
         else:
             all_ids = configured_group_ids()
             if not all_ids:

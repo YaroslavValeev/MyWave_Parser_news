@@ -8,12 +8,14 @@ from datetime import timezone
 from typing import Any
 
 from telethon.errors import FloodWaitError
+from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.types import Channel, Chat, User
 
 from config.settings import config
 from utils.group_authors_contract import (
     MESSAGE_TYPE_GROUP_AUTHOR,
     make_author_id,
+    normalize_group_target,
     to_telethon_peer_id,
     utc_now_iso,
 )
@@ -77,6 +79,48 @@ async def _sleep_flood(exc: FloodWaitError, *, attempt: int) -> bool:
     return attempt < 3
 
 
+async def _resolve_entity(client: Any, target: str) -> Any | None:
+    """Resolve @username / t.me / numeric id / -100… peer."""
+    norm = normalize_group_target(target) or str(target).strip()
+    if not norm:
+        return None
+    candidates: list[Any] = []
+    if norm.startswith("@"):
+        candidates.append(norm)
+        candidates.append(norm[1:])
+    elif norm.lstrip("-").isdigit():
+        if norm.startswith("-"):
+            candidates.append(int(norm))
+        else:
+            candidates.append(to_telethon_peer_id(norm))
+            candidates.append(int(norm))
+    else:
+        candidates.append(norm)
+    last_exc: Exception | None = None
+    for cand in candidates:
+        try:
+            return await client.get_entity(cand)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            continue
+    if last_exc:
+        LOGGER.warning("group_authors: resolve failed target=%s err=%s", target, last_exc)
+    return None
+
+
+async def _linked_discussion(client: Any, entity: Any) -> Any | None:
+    if not isinstance(entity, Channel) and not getattr(entity, "broadcast", False):
+        return None
+    try:
+        full = await client(GetFullChannelRequest(channel=entity))
+        linked_id = getattr(full.full_chat, "linked_chat_id", None)
+        if linked_id:
+            return await client.get_entity(linked_id)
+    except Exception:
+        LOGGER.debug("group_authors: linked discussion lookup failed", exc_info=True)
+    return None
+
+
 async def collect_group_message_authors(
     client: Any,
     *,
@@ -89,6 +133,8 @@ async def collect_group_message_authors(
     source_name: str = "",
 ) -> tuple[list[dict[str, Any]], GroupAuthorsCollectStats, int]:
     """Собрать уникальных авторов из последних сообщений группы.
+
+    Для broadcast-канала клуба — пробуем linked discussion (кто писал в чат комментариев).
 
     Returns: (records, stats, max_message_id_seen)
     """
@@ -104,24 +150,26 @@ async def collect_group_message_authors(
     out_by_user: dict[str, dict[str, Any]] = {}
     max_msg_id = int(min_message_id or 0)
 
-    peer = to_telethon_peer_id(group_id)
-    try:
-        entity = await client.get_entity(peer)
-    except Exception:
-        try:
-            entity = await client.get_entity(int(group_id))
-        except Exception:
-            stats.errors += 1
-            stats.skipped_no_access += 1
-            LOGGER.exception("group_authors: cannot resolve group_id=%s peer=%s", group_id, peer)
-            return [], stats, max_msg_id
-
-    if _is_broadcast_channel(entity):
-        stats.skipped_broadcast += 1
-        LOGGER.info("group_authors: skip broadcast channel id=%s (use /collect_commenters)", group_id)
+    entity = await _resolve_entity(client, group_id)
+    if entity is None:
+        stats.errors += 1
+        stats.skipped_no_access += 1
         return [], stats, max_msg_id
 
-    if not _is_group_chat(entity):
+    scan_entity = entity
+    if _is_broadcast_channel(entity):
+        linked = await _linked_discussion(client, entity)
+        if linked is None:
+            stats.skipped_broadcast += 1
+            LOGGER.info(
+                "group_authors: broadcast without discussion target=%s (use /collect_commenters)",
+                group_id,
+            )
+            return [], stats, max_msg_id
+        scan_entity = linked
+        LOGGER.info("group_authors: using linked discussion for channel target=%s", group_id)
+
+    if not _is_group_chat(scan_entity) and not _is_broadcast_channel(entity):
         stats.errors += 1
         LOGGER.warning("group_authors: entity is not a chat/group id=%s type=%s", group_id, type(entity))
         return [], stats, max_msg_id
@@ -132,13 +180,19 @@ async def collect_group_message_authors(
         or source_name
         or str(group_id)
     )
-    canonical_group_id = str(group_id).strip()
+    # Канон для upsert: username если был, иначе numeric id сущности
+    uname = getattr(entity, "username", None)
+    if uname:
+        canonical_group_id = f"@{uname}"
+    else:
+        eid = getattr(entity, "id", None)
+        canonical_group_id = str(eid) if eid is not None else normalize_group_target(group_id) or str(group_id).strip()
     attempt = 0
     try:
         while True:
             try:
                 async for msg in client.iter_messages(
-                    entity,
+                    scan_entity,
                     limit=limit,
                     min_id=max(0, int(min_message_id or 0)),
                 ):

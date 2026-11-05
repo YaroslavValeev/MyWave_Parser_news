@@ -31,7 +31,13 @@ async def test_collect_dedups_authors():
 
     class _Client:
         async def get_entity(self, _peer):
-            return SimpleNamespace(title="Wake Group", megagroup=True, broadcast=False)
+            return SimpleNamespace(
+                id=1701957243,
+                title="Wake Group",
+                username="wakedivision",
+                megagroup=True,
+                broadcast=False,
+            )
 
         def iter_messages(self, _entity, limit=100, min_id=0):
             async def _gen():
@@ -43,7 +49,7 @@ async def test_collect_dedups_authors():
 
     rows, stats, max_mid = await collect_group_message_authors(
         _Client(),
-        group_id="1701957243",
+        group_id="@wakedivision",
         message_limit=10,
         delay_seconds=0,
         skip_bots=True,
@@ -53,7 +59,7 @@ async def test_collect_dedups_authors():
     assert len(rows) == 2
     assert max_mid == 3
     assert {r["user_id"] for r in rows} == {"10", "11"}
-    assert make_author_id(group_id="1701957243", user_id="10") in {
+    assert make_author_id(group_id="@wakedivision", user_id="10") in {
         r["author_id"] for r in rows
     }
 
