@@ -1,0 +1,129 @@
+--- a/utils/source_context.py
++++ b/utils/source_context.py
+@@ -11,7 +11,42 @@
+ from nlp.sanitize import sanitize_text
+ 
+ MAX_ARTICLE_TEXT = 30000
+-_URLS = re.compile(r'https?://[^\s<>"\'\u200b]+', re.I)
++_URLS = re.compile(r'https?://[^\s<>"\'\[\]\u200b]+', re.I)
++_MARKDOWN_LINK = re.compile(r"!?\[[^\]\r\n]*\]\(\s*(?=https?://)", re.I)
++
++
++def _markdown_destinations(raw: str) -> str:
++    """Replace link labels with destinations, preserving balanced URL parentheses."""
++    replacements = []
++    for match in _MARKDOWN_LINK.finditer(raw):
++        depth = 1
++        end = match.end()
++        while end < len(raw) and raw[end] not in "\r\n":
++            if raw[end] == "(":
++                depth += 1
++            elif raw[end] == ")":
++                depth -= 1
++                if depth == 0:
++                    target = raw[match.end() : end].strip().split(None, 1)[0]
++                    replacements.append(
++                        (
++                            match.start(),
++                            end + 1,
++                            " " if match.group().startswith("!") else target,
++                        )
++                    )
++                    break
++            end += 1
++    for start, end, target in reversed(replacements):
++        raw = raw[:start] + target + raw[end:]
++    return raw
++
++
++def _trim_url(value: str) -> str:
++    value = value.rstrip(".,;]")
++    while value.endswith(")") and value.count(")") > value.count("("):
++        value = value[:-1]
++    return value
+ 
+ 
+ def source_input_hash(item: Mapping[str, Any]) -> str:
+@@ -33,12 +68,15 @@
+ 
+ def article_urls(item: Mapping[str, Any]) -> list[str]:
+     """Prefer links explicitly in the post; use its own link only when empty."""
+-    raw = sanitize_text(item.get("content")) or sanitize_text(item.get("transcript"))
++    raw = _markdown_destinations(
++        str(item.get("content") or item.get("transcript") or "")
++    )
++    raw = sanitize_text(raw)
+     urls = _URLS.findall(raw) if raw else [str(item.get("link") or "")]
+     found = []
+     for value in urls:
+         try:
+-            url = normalized_article_url(value.rstrip(").,;]"))
++            url = normalized_article_url(_trim_url(value))
+         except ValueError:
+             continue
+         if url not in found:
+--- a/utils/item_context.py
++++ b/utils/item_context.py
+@@ -4,9 +4,10 @@
+ from typing import Any, Mapping
+ from urllib.parse import urlparse
+ 
++from config.settings import config
+ from nlp.sanitize import sanitize_text
+ from utils.card_preview_text import to_card_preview_text
+-from utils.source_context import linked_article_context, source_input_hash
++from utils.source_context import article_urls, linked_article_context, source_input_hash
+ 
+ _TELEGRAM_HOSTS = {"t.me", "telegram.me"}
+ _TITLE_PLACEHOLDERS = {"без заголовка", "(без заголовка)"}
+@@ -20,14 +21,28 @@
+     return title
+ 
+ 
++def requires_linked_article_context(item: Mapping[str, Any]) -> bool:
++    """An explicitly linked allowed article is the factual source, not its caption."""
++    if not getattr(config, "SOURCE_ARTICLE_FETCH_ENABLED", False):
++        return False
++    urls = article_urls(item)
++    return len(urls) == 1 and urlparse(urls[0]).hostname in set(
++        getattr(config, "SOURCE_ARTICLE_ALLOWED_HOSTS", ())
++    )
++
++
+ def get_item_text_context(item: Mapping[str, Any]) -> str:
+     """Вернуть очищенный текстовый контекст материала только из реального контента."""
++    evidence = linked_article_context(item)
++    if evidence:
++        return evidence["text"]
++    if requires_linked_article_context(item):
++        return ""
+     for key in ("content", "transcript"):
+         text = sanitize_text(item.get(key))
+         if any(char.isalnum() for char in _URL_RE.sub("", text)):
+             return text
+-    evidence = linked_article_context(item)
+-    return evidence["text"] if evidence else ""
++    return ""
+ 
+ 
+ def is_telegram_item(item: Mapping[str, Any]) -> bool:
+@@ -116,6 +131,8 @@
+     nlp = nlp or {}
+     extra = nlp.get("extra")
+     evidence = linked_article_context(item)
++    if requires_linked_article_context(item) and not evidence:
++        return True
+     if isinstance(extra, Mapping) and extra.get("source_input_sha256"):
+         if extra["source_input_sha256"] != source_input_hash(item):
+             return True
+--- a/scripts/editorial_offline_smoke.py
++++ b/scripts/editorial_offline_smoke.py
+@@ -46,7 +46,7 @@
+     item_id = await repo.create_item(
+         {
+             "source": "Telegram",
+-            "content": url,
++            "content": f"Подробности: [{url}]({url})",
+             "link": "https://t.me/example/3048",
+             "status": "review",
+         }

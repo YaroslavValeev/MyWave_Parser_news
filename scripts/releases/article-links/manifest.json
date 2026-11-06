@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "source_ref": "5efcaafecdcaa355d19346b5158249139e594c7e",
+  "previous_release": "57be83d8b792ca84c87956d25a2b6ee0ff13e8da",
+  "before": {
+    "utils/source_context.py": "d6aa49aa8487f73a2345ebbe731eb43a72c9b63b7dd84f55b22b71cf33112382",
+    "utils/item_context.py": "92e155acd8ba2c82bc8e705934629802a3fafb5ffad89475babcb76e4abc96a3",
+    "scripts/editorial_offline_smoke.py": "d20a4958f37a334b07720f3553e18878a69a3b67f0df7dd8d7d21cadca9a786b"
+  },
+  "after": {
+    "utils/source_context.py": "f59dd197a8fe8a32189c696ed7416fa1b0395b782036e6094d952cf2b9fdd281",
+    "utils/item_context.py": "8f3e5782079dfb872352aa6d574f6a78abe7b8a2444e463ab844aa2fbeaeaacf",
+    "scripts/editorial_offline_smoke.py": "9adc4b04e29526cb357f12a9ed0fc758dbc1bac6ee0e26d086b1b6eda648d876"
+  },
+  "guard": {
+    "telegram_bot/views.py": "56e0fc0d96def21b762de0a31609903ed18eace3bfa1099b520ec042e7af38b3",
+    "utils/owner_content.py": "9acf8234f1a051a293d72d4ddba53b4096021b18da759e520d2f8cf217f7ccfc",
+    "telegram_bot/router.py": "4809bfec8d9e3712e5b81ce97cb0c870f9b9053cf0676250b6f0954af7b05158",
+    "utils/safe_http.py": "d493c74b0efb5fdfefe557c7848e7751569de3c6798b3eb0c995f93c9fec5f8c",
+    "utils/russian_summary.py": "b96d596f2c6e52ca79d7feec0b37d3af38c3fa922c4b28e2ed880da7a637b1ba",
+    "config/settings.py": "c4a0b5cb88785b830fcbccda01d6d882a494c9c17d91e4fe05106f2ed3602d20",
+    "nlp/openai_client.py": "2427114d491ee170168309c02116d32879da4277b04799b11eb1ef0d79861e1c",
+    "services/nlp_pipeline.py": "e59a4e2f429c964c85139bbccf30beb577c65a59955bcf73e07f0854d4c78653",
+    "storage/repository.py": "de7a3c07ca1b4a12ca1b88822fdc4ec95c6b94d515d331a37cc5737e819baea9",
+    "services/publication.py": "9af5fa2a93f99c1e6d92a485840298cfa7a6ece3ec1978270ce9521c9f7a2cd4",
+    "services/source_article.py": "0f5a982fe61dad48c45221b53d766712b5a7ba8128510122abef89bde4685e9b",
+    "storage/migrations/004_source_context.sql": "77d6eea365f2e00ae47b5c97c066137915371f5ed224f34557d5e5059b7ed71c",
+    "scripts/probe_source_article.py": "bb6117a4b64bab95176435aece92862d52197f98c437096771173bc1f486343b"
+  },
+  "patch_sha256": "1a22742c8d6528edf3e4376cab461e6809a6c60f21539da65591d7a4bcd21863"
+}
