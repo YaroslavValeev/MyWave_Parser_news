@@ -1,0 +1,6 @@
+# Place Owner/audit exports here (read-only copies from prod /tmp):
+# - blog-media-audit.csv
+# - blog-media-final-audit-20260616.txt
+# - blog-media-backfill-candidates-20260616.json
+# - gm-blog-media-backfill-request-20260616.txt
+# - raw_feed_snapshot_YYYYMMDD.csv (before any future writeback)

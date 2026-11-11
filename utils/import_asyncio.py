@@ -37,36 +37,51 @@ if _root_dir not in sys.path:
     sys.path.insert(0, _root_dir)
 from telegram_session import TelegramSessionManager
 from utils.row_utils import generate_checksum, validate_raw_row
+from utils.competitions_contract import COMPETITIONS_COLUMNS
 from utils.sheet_schema import RAW_FEED_COLUMNS, DEFAULTS
 from utils.contract_schema import CONTRACT_COLUMNS, build_contract_rows, SITE_OWNED_FIELDS
+from utils.card_preview_text import normalize_raw_feed_card_fields
+from utils.media_utils import (
+    extract_cover_image_url,
+    media_kind_from_path,
+    media_path_to_public_url,
+    normalize_media_contract_fields,
+    sanitize_media_json_payload,
+    sanitize_raw_media_payload,
+)
 
 # Локальная функция для скачивания медиа из Telegram
 async def download_media(client, message):
-    """Скачивание медиа с повторными попытками"""
+    """Скачивание медиа. Skip/overwrite по message.id — без Telethon «file (1).ext»."""
     if not hasattr(message, 'media') or not message.media:
         return None, None
     try:
-        # Создаем папку media если её нет (используем абсолютный путь для Windows)
-        media_dir = os.path.join(os.getcwd(), "media")
-        os.makedirs(media_dir, exist_ok=True)
-        
-        # Определяем тип медиа
+        from pathlib import Path
+
+        media_dir = Path(os.getcwd()) / "media"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        msg_id = getattr(message, "id", None) or uuid.uuid4().hex
+
         if isinstance(message.media, MessageMediaPhoto):
             media_type = "photo"
-            file = await client.download_media(
-                message.media,
-                file=os.path.join(media_dir, f"{uuid.uuid4()}.jpg")
-            )
+            target = media_dir / f"{msg_id}.jpg"
+            if target.exists() and target.stat().st_size > 0:
+                return str(target), media_type
+            if target.exists():
+                target.unlink(missing_ok=True)
+            file = await client.download_media(message.media, file=str(target))
         elif isinstance(message.media, MessageMediaDocument):
             media_type = "video"
             doc = message.media.document
-            ext = doc.mime_type.split('/')[-1] if doc.mime_type else 'unknown'
-            file = await client.download_media(
-                doc,
-                file=os.path.join(media_dir, f"{uuid.uuid4()}.{ext}")
-            )
+            ext = doc.mime_type.split('/')[-1] if doc.mime_type else 'bin'
+            ext = (ext or "bin").split(";")[0]
+            target = media_dir / f"{msg_id}.{ext}"
+            if target.exists() and target.stat().st_size > 0:
+                return str(target), media_type
+            if target.exists():
+                target.unlink(missing_ok=True)
+            file = await client.download_media(doc, file=str(target))
         else:
-            # Неизвестный тип медиа
             return None, None
         return file, media_type
     except Exception as e:
@@ -434,9 +449,19 @@ class TelegramParser(BaseParser):
                     
                     unique_id = generate_unique_id()
                     text = message.text or ""
+
+                    source_item_id = str(message.id) if hasattr(message, 'id') else ''
+                    # Публичная ссылка на пост — в raw_feed / media_json только она (без локальных путей).
+                    source_url = (
+                        f"https://t.me/{entity.username}/{message.id}"
+                        if hasattr(entity, 'username') and entity.username
+                        else source.url
+                    )
+                    canonical_url = source_url
+
                     media_path = None
                     media_type = None
-                    if message.media:
+                    if message.media and getattr(config, "TELEGRAM_ARCHIVE_MEDIA_TO_DISK", False):
                         media_path, media_type = await download_media(self.client, message)
 
                     author_info = await get_author_info(self.client, message)
@@ -450,22 +475,19 @@ class TelegramParser(BaseParser):
                         msg_date = datetime.now(timezone.utc).isoformat()
                         original_published_at = ''
 
-                    # Формируем media_json если есть медиа
                     media_json = ''
-                    if media_path:
-                        import json
+                    raw_media = ''
+                    media_url = media_path_to_public_url(media_path)
+                    if message.media:
+                        kind = media_kind_from_path(media_path) or media_type or 'telegram_post'
                         media_data = {
-                            'type': media_type,
-                            'path': media_path
+                            'type': kind,
+                            'post_url': canonical_url,
                         }
-                        media_json = json.dumps(media_data, ensure_ascii=False)
-
-                    # Определяем source_item_id (ID сообщения из Telegram)
-                    source_item_id = str(message.id) if hasattr(message, 'id') else ''
-                    
-                    # Формируем source_url и canonical_url (для Telegram они совпадают)
-                    source_url = f"https://t.me/{entity.username}/{message.id}" if hasattr(entity, 'username') and entity.username else source.url
-                    canonical_url = source_url
+                        if media_url:
+                            media_data['url'] = media_url
+                            raw_media = json.dumps([media_url], ensure_ascii=False)
+                        media_json = sanitize_media_json_payload(media_data)
                     
                     # Вытаскиваем хэштеги из текста
                     import re
@@ -475,11 +497,10 @@ class TelegramParser(BaseParser):
                     # Извлекаем cover_image_url из медиа (приоритет: вложение Telegram)
                     cover_image_url = ''
                     try:
-                        from utils.media_utils import extract_cover_image_url
                         cover_image_url = extract_cover_image_url({
                             'media_json': media_json,
-                            'raw_media': media_path if media_path else '',
-                            'source_url': source_url
+                            'raw_media': raw_media,
+                            'source_url': source_url,
                         }, prefer_largest=True) or ''
                     except Exception as e:
                         logger.debug(f"Не удалось извлечь cover_image_url из Telegram: {e}")
@@ -505,7 +526,7 @@ class TelegramParser(BaseParser):
                         'raw_title': msg_data_base['raw_title'],
                         'raw_content': msg_data_base['raw_content'],
                         'raw_html': '',  # В Telegram нет HTML
-                        'raw_media': media_path if media_path else '',
+                        'raw_media': sanitize_raw_media_payload(raw_media),
                         'media_json': media_json,
                         'content_format': 'text',  # Telegram сообщения - текст
                         'lang': 'ru',  # По умолчанию русский
@@ -615,25 +636,44 @@ class RSSParser(BaseParser):
                 # Формируем media_json если есть медиа в RSS
                 media_json = ''
                 cover_image_url = ''
-                if hasattr(entry, 'media_content') or hasattr(entry, 'enclosures'):
+                media_list = []
+                if hasattr(entry, 'enclosures'):
+                    for enc in entry.enclosures:
+                        enc_type = enc.get('type', '')
+                        enc_url = enc.get('href', '')
+                        if enc_type.startswith('image'):
+                            media_list.append({'type': 'image', 'url': enc_url})
+                        elif enc_type.startswith('video'):
+                            media_list.append({'type': 'video', 'url': enc_url})
+                description_html = entry.get('description', '') or ''
+                if description_html:
+                    try:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(description_html, 'html.parser')
+                        seen_media: set[str] = set()
+                        for selector, attr, media_type in (
+                            ("video[src]", "src", "video"),
+                            ("video source[src]", "src", "video"),
+                            ("iframe[src]", "src", "video"),
+                            ("meta[property='og:video'][content]", "content", "video"),
+                            ("img[src]", "src", "image"),
+                        ):
+                            for node in soup.select(selector):
+                                url = str(node.get(attr) or "").strip()
+                                if not url or url in seen_media:
+                                    continue
+                                seen_media.add(url)
+                                media_list.append({'type': media_type, 'url': url})
+                    except Exception as media_exc:
+                        logger.debug("RSS media parse skipped: %s", media_exc)
+                if media_list:
                     import json
-                    media_list = []
-                    if hasattr(entry, 'enclosures'):
-                        for enc in entry.enclosures:
-                            enc_type = enc.get('type', '')
-                            enc_url = enc.get('href', '')
-                            if enc_type.startswith('image'):
-                                media_list.append({'type': 'image', 'url': enc_url})
-                            elif enc_type.startswith('video'):
-                                media_list.append({'type': 'video', 'url': enc_url})
-                    if media_list:
-                        media_json = json.dumps(media_list, ensure_ascii=False)
-                        # Извлекаем cover_image_url из media_json (приоритет: rss enclosure)
-                        try:
-                            from utils.media_utils import extract_cover_image_url
-                            cover_image_url = extract_cover_image_url({'media_json': media_json, 'raw_html': entry.get('description', ''), 'source_url': entry_link}, prefer_largest=True) or ''
-                        except Exception as e:
-                            logger.debug(f"Не удалось извлечь cover_image_url из RSS: {e}")
+                    media_json = json.dumps(media_list, ensure_ascii=False)
+                    try:
+                        from utils.media_utils import extract_cover_image_url
+                        cover_image_url = extract_cover_image_url({'media_json': media_json, 'raw_html': description_html, 'source_url': entry_link}, prefer_largest=True) or ''
+                    except Exception as e:
+                        logger.debug(f"Не удалось извлечь cover_image_url из RSS: {e}")
                 
                 # Подготавливаем данные для генерации checksum
                 raw_title = clean_text(entry.get('title', ''))
@@ -729,92 +769,338 @@ class WebsiteParser(BaseParser):
         """
         self.validate_source(source)
         try:
+            import urllib.parse
+
             response = requests.get(
                 source.url,
                 timeout=config.WEBSITE_REQUEST_TIMEOUT,
                 headers={"User-Agent": "Mozilla/5.0 (MyWaveParser/1.0)"}
             )
+            response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Пример для wakeboardingmag.com - нужно адаптировать под каждый сайт
+
+            source_url = str(source.url or '').strip()
+            source_host = (urllib.parse.urlparse(source_url).netloc or '').lower().removeprefix('www.')
+
+            def _canonical_url(url: str) -> str:
+                parsed = urllib.parse.urlparse(str(url or '').strip())
+                host = (parsed.netloc or '').lower().removeprefix('www.')
+                path = (parsed.path or '/').rstrip('/') or '/'
+                return urllib.parse.urlunparse(
+                    (parsed.scheme.lower() or 'https', host, path, '', '', '')
+                )
+
+            source_canonical = _canonical_url(source_url)
+
+            def _resolve_url(url: str) -> str:
+                return urllib.parse.urljoin(source.url, str(url or '').strip())
+
+            def _same_as_source(url: str) -> bool:
+                return _canonical_url(url) == source_canonical
+
+            def _is_probable_listing_url(url: str) -> bool:
+                parsed = urllib.parse.urlparse(str(url or '').strip())
+                segments = [part for part in (parsed.path or '').strip('/').split('/') if part]
+                if not segments:
+                    return True
+                listing_names = {
+                    "blog",
+                    "blogs",
+                    "news",
+                    "articles",
+                    "events",
+                    "category",
+                    "categories",
+                    "tag",
+                    "tags",
+                    "author",
+                    "page",
+                }
+                if len(segments) == 1 and segments[0].lower() in listing_names:
+                    return True
+                return segments[0].lower() in {"category", "tag", "author", "page"}
+
+            source_is_listing = _is_probable_listing_url(source_url)
+
+            def _looks_like_article_url(url: str) -> bool:
+                parsed = urllib.parse.urlparse(str(url or '').strip())
+                if parsed.scheme not in {"http", "https"}:
+                    return False
+                host = (parsed.netloc or '').lower().removeprefix('www.')
+                if source_host and host != source_host:
+                    return False
+                if _same_as_source(url):
+                    return False
+                path = (parsed.path or '').strip('/')
+                if not path:
+                    return False
+                lowered = path.lower()
+                if lowered.endswith((
+                    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif",
+                    ".css", ".js", ".ico", ".xml", ".rss", ".atom", ".pdf",
+                )):
+                    return False
+                segments = [part for part in path.split('/') if part]
+                if not segments:
+                    return False
+                blocked_first = {"category", "tag", "author", "page", "wp-content", "wp-json", "feed"}
+                blocked_last = {"blog", "blogs", "news", "articles", "events", "category", "tag", "author", "page"}
+                if segments[0].lower() in blocked_first or segments[-1].lower() in blocked_last:
+                    return False
+                return len(segments[-1]) >= 5
+
+            def _extract_title(node) -> str:
+                title_elem = node.select_one(
+                    "h1, h2, h3, [itemprop='headline'], .entry-title, .post-title, .article-title"
+                )
+                if not title_elem:
+                    return ''
+                return clean_text(title_elem.get_text(separator=' ', strip=True))
+
+            def _extract_content(node) -> str:
+                content_elem = node.select_one(
+                    "[itemprop='articleBody'], .entry-content, .post-content, .article-content, .content, .entry-summary, .post-excerpt, .excerpt, p"
+                )
+                text = content_elem.get_text(separator=' ', strip=True) if content_elem else ''
+                if not text:
+                    text = node.get_text(separator=' ', strip=True)
+                return clean_text(text)
+
+            def _extract_media(node, *, limit: int = 5) -> list[dict]:
+                media_list: list[dict] = []
+                seen: set[str] = set()
+                for selector, attr, media_type in (
+                    ("img[src]", "src", "image"),
+                    ("img[data-src]", "data-src", "image"),
+                    ("img[data-lazy-src]", "data-lazy-src", "image"),
+                    ("meta[property='og:image'][content]", "content", "image"),
+                    ("video[src]", "src", "video"),
+                    ("video source[src]", "src", "video"),
+                    ("meta[property='og:video'][content]", "content", "video"),
+                    ("iframe[src]", "src", "video"),
+                ):
+                    for media_node in node.select(selector):
+                        url = _resolve_url(media_node.get(attr, ''))
+                        if not url or not url.startswith(('http://', 'https://')) or url in seen:
+                            continue
+                        seen.add(url)
+                        media_list.append({'type': media_type, 'url': url})
+                        if len(media_list) >= limit:
+                            return media_list
+                return media_list
+
+            def _build_item(*, raw_title: str, raw_content: str, raw_html: str, article_link: str, media_list: list[dict], original_published_at: str, debug_info: str) -> dict:
+                media_urls = [m['url'] for m in media_list if m.get('url')]
+                media_json = json.dumps(media_list, ensure_ascii=False) if media_list else ''
+                article_base = {
+                    'raw_title': raw_title,
+                    'raw_content': raw_content,
+                    'raw_html': raw_html,
+                }
+                checksum = generate_checksum(article_base)
+                now_iso = datetime.now(timezone.utc).isoformat()
+                return {
+                    'id': generate_unique_id(),
+                    'source_type': 'website',
+                    'source_name': source.name,
+                    'source_url': article_link,
+                    'source_item_id': article_link,
+                    'created_at': now_iso,
+                    'original_published_at': original_published_at,
+                    'raw_title': raw_title,
+                    'raw_content': raw_content,
+                    'raw_html': raw_html,
+                    'raw_media': json.dumps(media_urls, ensure_ascii=False) if media_urls else '',
+                    'media_json': media_json,
+                    'content_format': 'markdown',
+                    'lang': 'ru',
+                    'raw_tags': '',
+                    'status': 'DRAFT',
+                    'ingest_status': 'ok',
+                    'ingest_attempts': 1,
+                    'ingest_last_try_at': now_iso,
+                    'parse_error': '',
+                    'updated_at': now_iso,
+                    'checksum': checksum,
+                    'canonical_url': article_link,
+                    'cover_image_url': next((m['url'] for m in media_list if m.get('type') == 'image'), ''),
+                    'debug_info': debug_info,
+                }
+
+            def _extract_article_links(page_soup) -> list[str]:
+                selectors = (
+                    "article h1 a[href]",
+                    "article h2 a[href]",
+                    "article h3 a[href]",
+                    ".entry-title a[href]",
+                    ".post-title a[href]",
+                    ".article-title a[href]",
+                    ".card-title a[href]",
+                    ".post a[href]",
+                    ".article a[href]",
+                    "main a[href]",
+                )
+                links: list[str] = []
+                seen: set[str] = set()
+                for selector in selectors:
+                    for link_node in page_soup.select(selector):
+                        href = str(link_node.get('href') or '').strip()
+                        if not href or href.startswith(('#', 'mailto:', 'tel:', 'javascript:')):
+                            continue
+                        url = _resolve_url(href)
+                        canonical = _canonical_url(url)
+                        if canonical in seen or not _looks_like_article_url(url):
+                            continue
+                        seen.add(canonical)
+                        links.append(url)
+                        if len(links) >= self.limit:
+                            return links
+                return links
+
+            def _parse_article_soup(article_soup, article_url: str, *, debug_info: str) -> dict | None:
+                title = clean_text(
+                    (article_soup.select_one("meta[property='og:title']") or {}).get('content', '')
+                    if article_soup.select_one("meta[property='og:title']")
+                    else ''
+                )
+                article_node = article_soup.select_one(
+                    "article, [itemtype*='Article'], main, .entry-content, .post-content, .article-content"
+                )
+                if not title:
+                    title = _extract_title(article_node or article_soup)
+                if not title and article_soup.title:
+                    title = clean_text(article_soup.title.get_text(strip=True))
+
+                content_root = article_node or article_soup
+                content = _extract_content(content_root)
+                media_list = _extract_media(content_root, limit=5) or _extract_media(article_soup, limit=5)
+                raw_html = str(content_root)
+                original_published_at = ''
+                date_elem = article_soup.find(['time', 'span'], class_=['date', 'published', 'time'])
+                if date_elem:
+                    original_published_at = date_elem.get('datetime', '') or date_elem.get_text(strip=True)
+
+                if not (title or content or media_list):
+                    return None
+                return _build_item(
+                    raw_title=title,
+                    raw_content=content,
+                    raw_html=raw_html,
+                    article_link=article_url,
+                    media_list=media_list,
+                    original_published_at=original_published_at,
+                    debug_info=debug_info,
+                )
+
+            page_title = clean_text(
+                (soup.select_one("meta[property='og:title']") or {}).get('content', '')
+                if soup.select_one("meta[property='og:title']")
+                else (soup.title.get_text(strip=True) if soup.title else '')
+            )
+            page_description = clean_text(
+                (soup.select_one("meta[name='description']") or {}).get('content', '')
+                or (soup.select_one("meta[property='og:description']") or {}).get('content', '')
+            )
+            page_media = _extract_media(soup, limit=5)
+
             articles = []
-            for article in soup.select('article')[:self.limit]:  # Limit to 20 entries.
-                title_elem = article.find('h2')
-                title = title_elem.get_text(strip=True) if title_elem else ''
-                content_elem = article.find('div', class_='entry-content')
-                content = content_elem.get_text(strip=True) if content_elem else ''
-                
-                if title or content:
-                    # Извлекаем ссылку на статью если есть
-                    article_link = source.url
-                    link_elem = article.find('a', href=True)
-                    if link_elem:
-                        import urllib.parse
-                        article_link = urllib.parse.urljoin(source.url, link_elem['href'])
-                    
-                    # Извлекаем дату публикации если есть
-                    original_published_at = ''
-                    date_elem = article.find(['time', 'span'], class_=['date', 'published', 'time'])
-                    if date_elem:
-                        original_published_at = date_elem.get('datetime', '') or date_elem.get_text(strip=True)
-                    
-                    # Извлекаем медиа из статьи
-                    media_json = ''
-                    images = article.find_all('img')
-                    if images:
-                        import json
-                        media_list = []
-                        for img in images[:5]:  # Максимум 5 изображений
-                            img_url = img.get('src', '') or img.get('data-src', '')
-                            if img_url:
-                                import urllib.parse
-                                img_url = urllib.parse.urljoin(source.url, img_url)
-                                media_list.append({'type': 'image', 'url': img_url})
-                        if media_list:
-                            media_json = json.dumps(media_list, ensure_ascii=False)
-                    
-                    # Подготавливаем данные для генерации checksum
-                    raw_title = clean_text(title)
-                    raw_content = clean_text(content)
-                    raw_html = str(article) if article else ''  # Сохраняем HTML для дедупликации
-                    
-                    # Генерируем checksum ДО записи (на основе содержимого: raw_title + raw_content + raw_html)
-                    article_base = {
-                        'raw_title': raw_title,
-                        'raw_content': raw_content,
-                        'raw_html': raw_html,
-                    }
-                    checksum = generate_checksum(article_base)
-                    
-                    articles.append({
-                        'id': generate_unique_id(),
-                        'source_type': 'website',
-                        'source_name': source.name,
-                        'source_url': article_link,
-                        'source_item_id': article_link,  # Используем ссылку как ID
-                        'created_at': datetime.now(timezone.utc).isoformat(),
-                        'original_published_at': original_published_at,
-                        'raw_title': raw_title,
-                        'raw_content': raw_content,
-                        'raw_html': str(article),  # Сохраняем HTML для дальнейшей обработки
-                        'raw_media': '',
-                        'media_json': media_json,
-                        'content_format': 'markdown',  # HTML контент, будет конвертирован в markdown
-                        'lang': 'ru',
-                        'raw_tags': '',
-                        'status': 'DRAFT',
-                        'ingest_status': 'ok',
-                        'ingest_attempts': 1,
-                        'ingest_last_try_at': datetime.now(timezone.utc).isoformat(),
-                        'parse_error': '',
-                        'updated_at': datetime.now(timezone.utc).isoformat(),
-                        'checksum': checksum,  # Генерируется ДО записи
-                        'canonical_url': article_link,  # Для сайтов canonical_url = source_url
-                        'cover_image_url': '',  # Пока оставляем пустым
-                        'debug_info': f"article_class: {article.get('class', [])}"
-                    })
-                    
-            return articles
+            article_nodes = soup.select('article')[:self.limit]
+            for article in article_nodes:
+                title = _extract_title(article)
+                content = _extract_content(article)
+                media_list = _extract_media(article, limit=5)
+
+                if not (title or content or media_list):
+                    continue
+
+                article_link = source.url
+                link_elem = article.select_one("h1 a[href], h2 a[href], h3 a[href], a[href]")
+                if link_elem:
+                    article_link = _resolve_url(link_elem.get('href', ''))
+
+                if source_is_listing:
+                    if not _looks_like_article_url(article_link):
+                        logger.debug("Website: skip listing/article wrapper without article URL: %s", article_link)
+                    # На страницах-разделах <article> обычно является карточкой/превью.
+                    # Полный текст берём после открытия article_link ниже.
+                    continue
+
+                if not _looks_like_article_url(article_link) and not _same_as_source(article_link):
+                    logger.debug("Website: skip listing/article wrapper without article URL: %s", article_link)
+                    continue
+
+                original_published_at = ''
+                date_elem = article.find(['time', 'span'], class_=['date', 'published', 'time'])
+                if date_elem:
+                    original_published_at = date_elem.get('datetime', '') or date_elem.get_text(strip=True)
+
+                raw_html = str(article)
+                if not content and page_description and article_link == source.url:
+                    content = page_description
+                articles.append(
+                    _build_item(
+                        raw_title=title,
+                        raw_content=content,
+                        raw_html=raw_html,
+                        article_link=article_link,
+                        media_list=media_list or page_media,
+                        original_published_at=original_published_at,
+                        debug_info=f"site_link={article_link} classes={article.get('class', [])}",
+                    )
+                )
+
+            if articles:
+                return articles
+
+            article_links = _extract_article_links(soup) if source_is_listing else []
+            for article_link in article_links:
+                try:
+                    article_response = requests.get(
+                        article_link,
+                        timeout=config.WEBSITE_REQUEST_TIMEOUT,
+                        headers={"User-Agent": "Mozilla/5.0 (MyWaveParser/1.0)"}
+                    )
+                    article_response.raise_for_status()
+                    article_soup = BeautifulSoup(article_response.text, 'html.parser')
+                    parsed = _parse_article_soup(
+                        article_soup,
+                        article_link,
+                        debug_info=f"site_link={article_link} discovered_from={source.url}",
+                    )
+                    if parsed:
+                        articles.append(parsed)
+                        if len(articles) >= self.limit:
+                            break
+                except Exception as article_error:  # noqa: BLE001
+                    logger.debug("Website: failed to parse discovered article %s: %s", article_link, article_error)
+                    continue
+
+            if articles:
+                return articles
+
+            if source_is_listing:
+                logger.info("Website: %s выглядит как главная/раздел, но ссылки на статьи не найдены — страницу не сохраняем как новость.", source.url)
+                return []
+
+            page_main = soup.select_one("main, article, body")
+            fallback_html = str(page_main or soup)
+            fallback_content = page_description or clean_text(
+                (page_main.get_text(separator=' ', strip=True) if page_main else soup.get_text(separator=' ', strip=True))
+            )
+            fallback_title = page_title or clean_text(getattr(source, 'name', '') or source.url)
+            if fallback_title or fallback_content or page_media:
+                return [
+                    _build_item(
+                        raw_title=fallback_title,
+                        raw_content=fallback_content,
+                        raw_html=fallback_html,
+                        article_link=source.url,
+                        media_list=page_media,
+                        original_published_at='',
+                        debug_info=f"site_link={source.url} fallback=page",
+                    )
+                ]
+            return []
         except Exception as e:
             logger.error(f"Ошибка парсинга сайта: {e}")
             # При ошибке парсинга возвращаем запись с ошибкой
@@ -1175,7 +1461,10 @@ async def update_sheet_row(doc, sheet_name, item_data, lookup_field='checksum'):
     ws = get_worksheet(doc, sheet_name)
     if ws is None:
         return False
-    
+
+    if sheet_name == "raw_feed":
+        normalize_raw_feed_card_fields(item_data)
+
     try:
         all_values = ws.get_all_values()
         if not all_values or len(all_values) < 2:
@@ -1524,6 +1813,17 @@ async def save_to_sheet(doc, sheet_name, data_list, existing_checksums=None, ws_
                 if len(row) > max(i_st, i_sn, i_sid) and row[i_sid]:
                     existing_source_item_ids.add((str(row[i_st]).strip(), str(row[i_sn]).strip(), str(row[i_sid]).strip()))
     
+    # Каноничный publishable-набор для витрины сайта.
+    publishable_statuses = {"READY_TO_PUBLISH", "PUBLISHED"}
+    drop_reason_publishable_without_final = "publishable_status_requires_final_posts"
+    # Batch-метрики для контроля контракта.
+    dropped_reasons = {
+        "duplicate_source_item_id": 0,
+        "duplicate_checksum": 0,
+        "invalid_row": 0,
+        "publishable_without_final_posts": 0,
+    }
+
     # Преобразуем данные в нужный порядок (header-based)
     valid_rows = []
     seen_checksums = set(existing_checksums)  # Для фильтрации дублей внутри одной итерации
@@ -1554,13 +1854,53 @@ async def save_to_sheet(doc, sheet_name, data_list, existing_checksums=None, ws_
         if not item.get("ingest_attempts"):
             item["ingest_attempts"] = 1
 
+        if sheet_name == "raw_feed":
+            item.update(normalize_media_contract_fields(item))
+            normalize_raw_feed_card_fields(item)
+
         # P1: идемпотентность — приоритет source_item_id: не создаём дубль по (source_type, source_name, source_item_id)
         if sheet_name == "raw_feed":
             st, sn, sid = item.get("source_type", ""), item.get("source_name", ""), item.get("source_item_id", "")
             if sid and (str(st).strip(), str(sn).strip(), str(sid).strip()) in existing_source_item_ids:
+                dropped_reasons["duplicate_source_item_id"] += 1
                 continue
         # Fallback: дубль по checksum (если source_item_id пустой или не совпал)
         if item["checksum"] in seen_checksums:
+            dropped_reasons["duplicate_checksum"] += 1
+            continue
+
+        # Публикуемые статусы допускаются только при наличии финального подтверждённого текста.
+        status_upper = str(item.get("status", "")).strip().upper()
+        final_posts_value = str(item.get("final_posts", "") or "").strip()
+        if sheet_name == "raw_feed" and status_upper in publishable_statuses and not final_posts_value:
+            dropped_reasons["publishable_without_final_posts"] += 1
+            job_id = str(item.get("job_id", "")).strip()
+            row_id = (
+                str(item.get("row_number", "")).strip()
+                or str(item.get("raw_id", "")).strip()
+                or str(item.get("id", "")).strip()
+            )
+            item["error_log"] = f"{drop_reason_publishable_without_final}: status={status_upper}"
+            item["debug_info"] = (
+                f"drop_reason={drop_reason_publishable_without_final}; "
+                f"job_id={job_id or '-'}; row_id={row_id or '-'}"
+            )
+            logger.warning(
+                "raw_feed drop: publishable status without final_posts",
+                extra={
+                    "job_id": job_id or "-",
+                    "row_id": row_id or "-",
+                    "item_id": str(item.get("id", "")).strip() or "-",
+                    "status": status_upper,
+                    "drop_reason": drop_reason_publishable_without_final,
+                },
+            )
+            logger.warning(
+                "raw_feed drop details: id=%s status=%s reason=%s",
+                item.get("id", ""),
+                status_upper,
+                drop_reason_publishable_without_final,
+            )
             continue
 
         if validate_raw_row(item):
@@ -1592,6 +1932,8 @@ async def save_to_sheet(doc, sheet_name, data_list, existing_checksums=None, ws_
 
             valid_rows.append(row)
             seen_checksums.add(item['checksum'])
+        else:
+            dropped_reasons["invalid_row"] += 1
     
     if valid_rows:
         logger.info(f"Добавление {len(valid_rows)} строк в лист {sheet_name} (header-based)")
@@ -1647,6 +1989,18 @@ async def save_to_sheet(doc, sheet_name, data_list, existing_checksums=None, ws_
     else:
         logger.warning(f"Нет валидных строк для записи в {sheet_name} (или все дубли)")
 
+    input_count = len(data_list or [])
+    written_count = len(valid_rows)
+    dropped_count = input_count - written_count
+    logger.info(
+        "batch summary (%s): input=%s written=%s dropped=%s reasons=%s",
+        sheet_name,
+        input_count,
+        written_count,
+        dropped_count,
+        dropped_reasons,
+    )
+
 
 async def ensure_contract_sheet(doc):
     """
@@ -1694,7 +2048,8 @@ SHEET_COLUMNS = {
     ],
     'analytics': [
         "date", "news_processed", "posts_published", "user_feedback_count", "avg_time_to_publish", "errors_count", "users_active", "reach_vk", "reach_tg", "reach_fb", "reach_dzen"
-    ]
+    ],
+    'competitions_ticker': list(COMPETITIONS_COLUMNS),
 }
 
 def get_worksheet(doc, sheet_name):
