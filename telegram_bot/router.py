@@ -29,8 +29,13 @@ from core.scheduler import (
 from nlp.openai_client import get_openai_client
 from services.channel_engagement import run_channel_engagement
 from services.group_authors_engagement import run_group_authors_collect
+from services.group_members_engagement import run_group_members_collect
 from services.manual_collect import collect_single_source, guess_source_type
-from storage.data import count_channel_commenters, count_group_authors
+from storage.data import (
+    count_channel_commenters,
+    count_group_authors,
+    count_group_members,
+)
 from services.media_upload import find_local_cover_paths, media_upload_url, upload_cover_image
 from services.publication import PublicationSendError, PublicationService
 from services.raw_feed_sync import sync_media_fields
@@ -830,12 +835,14 @@ def create_router(repository: AsyncNewsRepository, bot: Bot) -> Router:
             metrics = await repo.get_processing_summary()
             commenters_n = await count_channel_commenters()
             group_authors_n = await count_group_authors()
+            group_members_n = await count_group_members()
             health_rows = await repo.list_source_health(limit=20)
             text = format_stats(
                 counts,
                 metrics,
                 channel_commenters=commenters_n,
                 group_authors=group_authors_n,
+                group_members=group_members_n,
                 source_health=health_rows,
             )
             await message.answer(text, parse_mode="HTML")
@@ -900,6 +907,40 @@ def create_router(repository: AsyncNewsRepository, bot: Bot) -> Router:
         except Exception:
             LOGGER.exception("collect_group_authors failed")
             await message.answer("Ошибка сбора авторов групп. Смотрите лог сервера.")
+
+    @router.message(Command("collect_group_members"))
+    async def cmd_collect_group_members(message: Message, command: CommandObject):
+        uid = message.from_user.id if message.from_user else None
+        if not is_bot_operator(uid):
+            await message.answer("Команда только для оператора бота.", parse_mode="HTML")
+            return
+        group_arg = (command.args or "").strip()
+        await message.answer(
+            "Собираю видимых участников групп "
+            "(не подписчиков broadcast-канала)…"
+        )
+        try:
+            result = await run_group_members_collect(
+                group_id=group_arg or None,
+                sync_sheet=True,
+                use_chunk=not bool(group_arg),
+            )
+            st = result.stats
+            note = f"\nПримечание: {html.escape(result.note)}" if result.note else ""
+            await message.answer(
+                "<b>Участники групп</b>\n"
+                f"Сохранено в БД: <b>{result.saved_db}</b>\n"
+                f"Sheets: обновлено {result.sheet_updated}, добавлено {result.sheet_appended}\n"
+                f"Участников собрано: {st.members_collected if st else 0}\n"
+                f"Групп ok/scan: {st.groups_ok if st else 0}/{st.groups_scanned if st else 0}\n"
+                f"Пропущено каналов: {st.skipped_broadcast if st else 0}\n"
+                f"Нужен admin: {st.skipped_admin_required if st else 0}\n"
+                f"Ошибок: {result.errors}{note}",
+                parse_mode="HTML",
+            )
+        except Exception:
+            LOGGER.exception("collect_group_members failed")
+            await message.answer("Ошибка сбора участников групп. Смотрите лог сервера.")
 
     @router.message(Command("media_diag"))
     async def cmd_media_diag(message: Message):

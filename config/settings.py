@@ -137,6 +137,17 @@ class Config:
     )
     GROUP_AUTHORS_CRON_HOUR = int(os.getenv("GROUP_AUTHORS_CRON_HOUR", "5"))
     GROUP_AUTHORS_CRON_MINUTE = int(os.getenv("GROUP_AUTHORS_CRON_MINUTE", "0"))
+    # Участники групп (видимый roster megagroup; НЕ подписчики broadcast-канала)
+    GROUP_MEMBERS_COLLECT_ENABLED = (
+        os.getenv("GROUP_MEMBERS_COLLECT_ENABLED", "false").lower() == "true"
+    )
+    GROUP_MEMBERS_IDS = os.getenv("GROUP_MEMBERS_IDS", "")  # пусто → fallback на GROUP_AUTHORS_IDS
+    GROUP_MEMBERS_LIMIT = int(os.getenv("GROUP_MEMBERS_LIMIT", "500"))
+    GROUP_MEMBERS_DELAY_SECONDS = float(os.getenv("GROUP_MEMBERS_DELAY_SECONDS", "0.05"))
+    GROUP_MEMBERS_CHANNELS_CHUNK = int(os.getenv("GROUP_MEMBERS_CHANNELS_CHUNK", "1"))
+    GROUP_MEMBERS_SKIP_BOTS = (
+        os.getenv("GROUP_MEMBERS_SKIP_BOTS", "true").lower() == "true"
+    )
     # Автосбор календарей соревнований (фаза C)
     COMPETITIONS_COLLECT_ENABLED = (
         os.getenv("COMPETITIONS_COLLECT_ENABLED", "false").lower() == "true"

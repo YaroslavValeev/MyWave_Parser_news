@@ -1079,6 +1079,87 @@ class AsyncNewsRepository:
                 )
             await db.commit()
 
+    async def upsert_group_members(self, records: Iterable[Mapping[str, Any]]) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        n = 0
+        async with self._connection() as db:
+            for rec in records:
+                mid = str(rec.get("member_id") or "").strip()
+                if not mid:
+                    continue
+                await db.execute(
+                    """
+                    INSERT INTO group_members (
+                        member_id, group_id, group_title, user_id, user_name,
+                        is_bot, is_admin, source_name, synced_to_sheet, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    ON CONFLICT(member_id) DO UPDATE SET
+                        group_title = excluded.group_title,
+                        user_id = excluded.user_id,
+                        user_name = excluded.user_name,
+                        is_bot = excluded.is_bot,
+                        is_admin = excluded.is_admin,
+                        source_name = excluded.source_name,
+                        synced_to_sheet = 0,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        mid,
+                        rec.get("group_id") or "",
+                        rec.get("group_title"),
+                        rec.get("user_id"),
+                        rec.get("user_name"),
+                        int(rec.get("is_bot") or 0),
+                        int(rec.get("is_admin") or 0),
+                        rec.get("source_name"),
+                        now,
+                        now,
+                    ),
+                )
+                n += 1
+            await db.commit()
+        return n
+
+    async def count_group_members(self) -> int:
+        async with self._connection() as db:
+            cur = await db.execute("SELECT COUNT(*) FROM group_members")
+            row = await cur.fetchone()
+            return int(row[0]) if row else 0
+
+    async def list_group_members_unsynced(
+        self, *, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        async with self._connection() as db:
+            cur = await db.execute(
+                """
+                SELECT * FROM group_members
+                WHERE synced_to_sheet = 0
+                ORDER BY datetime(updated_at) DESC
+                LIMIT ?
+                """,
+                (max(1, limit),),
+            )
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+    async def mark_group_members_synced(self, member_ids: Iterable[str]) -> int:
+        ids = [str(x).strip() for x in member_ids if str(x).strip()]
+        if not ids:
+            return 0
+        now = datetime.now(timezone.utc).isoformat()
+        async with self._connection() as db:
+            for mid in ids:
+                await db.execute(
+                    """
+                    UPDATE group_members
+                    SET synced_to_sheet = 1, updated_at = ?
+                    WHERE member_id = ?
+                    """,
+                    (now, mid),
+                )
+            await db.commit()
+        return len(ids)
+
     async def upsert_source_health(self, tick: Mapping[str, Any]) -> None:
         """Записать метрики одного тика сбора по источнику (Stage 1 telemetry)."""
         key = str(tick.get("source_key") or "").strip()
