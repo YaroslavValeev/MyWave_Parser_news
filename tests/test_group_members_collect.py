@@ -55,7 +55,7 @@ async def test_collect_group_members_megagroup():
 
 
 @pytest.mark.asyncio
-async def test_collect_skips_broadcast_channel():
+async def test_collect_skips_broadcast_without_discussion(monkeypatch):
     class _Client:
         async def get_entity(self, _peer):
             return SimpleNamespace(
@@ -69,6 +69,14 @@ async def test_collect_skips_broadcast_channel():
         def iter_participants(self, *_a, **_k):
             raise AssertionError("must not iterate broadcast roster")
 
+    async def _no_linked(_client, _entity):
+        return None
+
+    monkeypatch.setattr(
+        "collectors.group_members._linked_discussion",
+        _no_linked,
+    )
+
     rows, stats = await collect_group_members(
         _Client(),
         group_id="@wakedivision",
@@ -77,6 +85,62 @@ async def test_collect_skips_broadcast_channel():
     assert rows == []
     assert stats.skipped_broadcast == 1
     assert stats.members_collected == 0
+
+
+@pytest.mark.asyncio
+async def test_collect_uses_linked_discussion_for_broadcast(monkeypatch):
+    channel = SimpleNamespace(
+        id=1609224876,
+        title="SportStation",
+        username="sportstation_club",
+        megagroup=False,
+        broadcast=True,
+    )
+    discussion = SimpleNamespace(
+        id=999001,
+        title="SportStation Chat",
+        username=None,
+        megagroup=True,
+        broadcast=False,
+    )
+    users = [
+        SimpleNamespace(id=21, username="ann", bot=False, first_name="Ann", last_name=""),
+        SimpleNamespace(id=22, username="bob", bot=False, first_name="Bob", last_name=""),
+    ]
+
+    class _Client:
+        async def get_entity(self, _peer):
+            return channel
+
+        def iter_participants(self, entity, limit=500, filter=None):
+            assert entity is discussion
+
+            async def _gen():
+                if filter is not None:
+                    return
+                for u in users:
+                    yield u
+
+            return _gen()
+
+    async def _linked(_client, _entity):
+        return discussion
+
+    monkeypatch.setattr(
+        "collectors.group_members._linked_discussion",
+        _linked,
+    )
+
+    rows, stats = await collect_group_members(
+        _Client(),
+        group_id="@sportstation_club",
+        delay_seconds=0,
+        skip_bots=True,
+    )
+    assert stats.skipped_broadcast == 0
+    assert stats.members_collected == 2
+    assert {r["group_id"] for r in rows} == {"@sportstation_club"}
+    assert {r["user_id"] for r in rows} == {"21", "22"}
 
 
 @pytest.mark.asyncio

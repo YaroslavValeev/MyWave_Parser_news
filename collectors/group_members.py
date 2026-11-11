@@ -12,6 +12,7 @@ from telethon.tl.types import Channel, Chat, ChannelParticipantsAdmins, User
 from collectors.group_authors import (
     _is_broadcast_channel,
     _is_group_chat,
+    _linked_discussion,
     _resolve_entity,
     _sender_fields,
 )
@@ -56,7 +57,8 @@ async def collect_group_members(
 ) -> tuple[list[dict[str, Any]], GroupMembersCollectStats]:
     """Собрать видимых участников группы / megagroup.
 
-    Broadcast-каналы без прав админа пропускаются (Telegram скрывает roster).
+    Для broadcast-канала клуба — берём roster linked discussion (не подписчиков канала).
+    Канал без discussion пропускается.
     """
     stats = GroupMembersCollectStats(groups_scanned=1)
     limit = max(1, int(member_limit or getattr(config, "GROUP_MEMBERS_LIMIT", 500)))
@@ -74,18 +76,30 @@ async def collect_group_members(
         stats.skipped_no_access += 1
         return [], stats
 
+    scan_entity = entity
     if _is_broadcast_channel(entity):
-        stats.skipped_broadcast += 1
+        linked = await _linked_discussion(client, entity)
+        if linked is None:
+            stats.skipped_broadcast += 1
+            LOGGER.info(
+                "group_members: broadcast without discussion target=%s "
+                "(subscribers hidden)",
+                group_id,
+            )
+            return [], stats
+        scan_entity = linked
         LOGGER.info(
-            "group_members: skip broadcast channel target=%s "
-            "(subscribers hidden; use /collect_group_authors for discussion writers)",
+            "group_members: using linked discussion for channel target=%s",
             group_id,
         )
-        return [], stats
 
-    if not _is_group_chat(entity) and not isinstance(entity, (Chat, Channel)):
+    if not _is_group_chat(scan_entity) and not isinstance(scan_entity, (Chat, Channel)):
         stats.errors += 1
-        LOGGER.warning("group_members: not a group target=%s type=%s", group_id, type(entity))
+        LOGGER.warning(
+            "group_members: not a group target=%s type=%s",
+            group_id,
+            type(scan_entity),
+        )
         return [], stats
 
     title = (
@@ -106,7 +120,7 @@ async def collect_group_members(
     admin_ids: set[str] = set()
     try:
         async for admin in client.iter_participants(
-            entity, filter=ChannelParticipantsAdmins()
+            scan_entity, filter=ChannelParticipantsAdmins()
         ):
             uid = getattr(admin, "id", None)
             if uid is not None:
@@ -123,7 +137,7 @@ async def collect_group_members(
     try:
         while True:
             try:
-                async for user in client.iter_participants(entity, limit=limit):
+                async for user in client.iter_participants(scan_entity, limit=limit):
                     uid, uname_disp, is_bot = _sender_fields(user)
                     if not uid:
                         continue

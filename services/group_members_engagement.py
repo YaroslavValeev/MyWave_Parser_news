@@ -176,8 +176,8 @@ async def run_group_members_collect(
             notes.append(f"Нет доступа к группам: {st.skipped_no_access}.")
         if st and st.skipped_broadcast:
             notes.append(
-                f"Пропущено broadcast-каналов: {st.skipped_broadcast} "
-                "(подписчики скрыты; авторы discussion — /collect_group_authors)."
+                f"Пропущено каналов без discussion: {st.skipped_broadcast} "
+                "(подписчики канала скрыты)."
             )
         if st and st.skipped_admin_required:
             notes.append(
